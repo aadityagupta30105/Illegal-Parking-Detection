@@ -1,5 +1,4 @@
 # Real-Time Illegal Parking Detection System
-**Course: BCSE403L — Digital Image Processing**
 
 ---
 
