@@ -1,0 +1,12 @@
+# Illegal Parking Detection System — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+opencv-python
+numpy
+scipy
+Pillow
+
+# Optional: GPU-accelerated YOLO (uncomment for production)
+# ultralytics>=8.0.0       # YOLOv8 — drop-in replacement for VehicleDetector
+# torch>=2.0.0
+# torchvision>=0.15.0
