@@ -7,61 +7,61 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    INPUT LAYER                                   │
+│                    INPUT LAYER                                  │
 │   .mov / .mp4 video file  ──►  OpenCV VideoCapture              │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ first frame
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               STEP 1 — ANNOTATION (one-time)                     │
-│   PolygonAnnotator (OpenCV GUI)                                  │
-│   • Display first frame                                          │
-│   • User left-clicks to place polygon vertices                   │
-│   • ENTER confirms the no-parking zone                           │
+│               STEP 1 — ANNOTATION (one-time)                    │
+│   PolygonAnnotator (OpenCV GUI)                                 │
+│   • Display first frame                                         │
+│   • User left-clicks to place polygon vertices                  │
+│   • ENTER confirms the no-parking zone                          │
 │   • Zone stored as np.ndarray of (x,y) points                   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ zone_poly
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               STEP 2 — VEHICLE DETECTION (per frame)             │
-│   VehicleDetector (classical DIP)                                │
-│   1. Grayscale + Gaussian blur                                   │
+│               STEP 2 — VEHICLE DETECTION (per frame)            │
+│   VehicleDetector (classical DIP)                               │
+│   1. Grayscale + Gaussian blur                                  │
 │   2. MOG2 Background Subtraction  → foreground mask             │
-│   3. Shadow removal (thresholding MOG2 shadow value)             │
+│   3. Shadow removal (thresholding MOG2 shadow value)            │
 │   4. Morphological open/close/dilate  → clean blobs             │
 │   5. Contour extraction + area / aspect-ratio filter            │
-│   → List[BBox]                                                   │
-│                                                                  │
-│   ── Optional upgrade ──                                         │
-│   YOLOVehicleDetector (yolo_detector.py)                         │
-│   Replaces step above with YOLOv8n inference                     │
+│   → List[BBox]                                                  │
+│                                                                 │
+│   ── Optional upgrade ──                                        │
+│   YOLOVehicleDetector (yolo_detector.py)                        │
+│   Replaces step above with YOLOv8n inference                    │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ detections: List[BBox]
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               STEP 2 — VEHICLE TRACKING                          │
-│   SortLiteTracker (IoU + Hungarian assignment)                   │
-│   • Associates each detection with the closest existing track    │
-│   • Assigns persistent integer IDs                               │
-│   • Removes tracks missing for > MAX_MISSED_FRAMES frames        │
+│               STEP 2 — VEHICLE TRACKING                         │
+│   SortLiteTracker (IoU + Hungarian assignment)                  │
+│   • Associates each detection with the closest existing track   │
+│   • Assigns persistent integer IDs                              │
+│   • Removes tracks missing for > MAX_MISSED_FRAMES frames       │
 │   → List[Track]  (each track has stable ID, BBox, history)      │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ tracks: List[Track]
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               STEP 3 — ZONE CHECK & DWELL TIMING                 │
-│   For each active track:                                         │
+│               STEP 3 — ZONE CHECK & DWELL TIMING                │
+│   For each active track:                                        │
 │   • is_in_zone(zone_poly, bbox)  — point-in-polygon test        │
 │   • If inside:  record entry timestamp  → accumulate dwell time │
-│   • If outside: reset timer                                      │
-│   AlertManager.check(track)                                      │
+│   • If outside: reset timer                                     │
+│   AlertManager.check(track)                                     │
 │   • If dwell_seconds ≥ threshold → fire ALERT (log + visual)    │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               PARKING SPOT OCCUPANCY                             │
-│   ParkingSpotManager                                             │
+│               PARKING SPOT OCCUPANCY                            │
+│   ParkingSpotManager                                            │
 │   • Grid of spots defined outside the no-parking zone           │
 │   • IoU check between each spot and each active track           │
 │   • Shows AVAILABLE / OCCUPIED counts on HUD                    │
@@ -69,9 +69,9 @@
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│               HUD RENDERER + OUTPUT                              │
+│               HUD RENDERER + OUTPUT                             │
 │   draw_hud(): zone overlay, bounding boxes, dwell bars,         │
-│   alerts, info panel, parking spot grid                          │
+│   alerts, info panel, parking spot grid                         │
 │   Optional: cv2.VideoWriter → annotated .mp4 output             │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -83,22 +83,22 @@
 ```
 for each frame F:
   ┌─ VehicleDetector.detect(F) ─────────────────────────────────┐
-  │  gray ← grayscale(F)                                         │
-  │  blur ← GaussianBlur(gray, 7×7)                              │
-  │  fg   ← MOG2.apply(blur)          # background model update  │
-  │  mask ← threshold(fg, 200)        # remove shadows           │
-  │  mask ← morphOpen(mask) ∘ morphClose(mask) ∘ dilate(mask)   │
-  │  cnts ← findContours(mask)                                   │
+  │  gray ← grayscale(F)                                        │
+  │  blur ← GaussianBlur(gray, 7×7)                             │
+  │  fg   ← MOG2.apply(blur)          # background model update │
+  │  mask ← threshold(fg, 200)        # remove shadows          │
+  │  mask ← morphOpen(mask) * morphClose(mask) * dilate(mask)   │
+  │  cnts ← findContours(mask)                                  │
   │  dets ← [BBox(cnt) for cnt in cnts if area>MIN and AR ok]   │
-  └──────────────────────────────────────────────────────────────┘
+  └─────────────────────────────────────────────────────────────┘
          ↓ dets
   ┌─ SortLiteTracker.update(dets) ──────────────────────────────┐
-  │  cost[i,j] = 1 − IoU(track_i, det_j)                       │
+  │  cost[i,j] = 1 − IoU(track_i, det_j)                        │
   │  matched ← Hungarian(cost)  if cost < (1 − IOU_THRESH)      │
-  │  update matched tracks; increment missed for unmatched       │
-  │  create new tracks for unmatched detections                  │
+  │  update matched tracks; increment missed for unmatched      │
+  │  create new tracks for unmatched detections                 │
   │  prune tracks with missed > MAX_MISSED_FRAMES               │
-  └──────────────────────────────────────────────────────────────┘
+  └─────────────────────────────────────────────────────────────┘
          ↓ tracks
   for t in tracks:
     if centroid(t.bbox) inside zone_poly:
@@ -202,7 +202,7 @@ When the annotation window opens:
 
 - **Console / `parking_alerts.log`** — timestamped alert messages:
   ```
-  2024-01-15 14:32:11  [WARNING]  🚨 ILLEGAL PARKING ALERT | Vehicle ID=3 | Dwell=10.2 min | ...
+  2024-01-15 14:32:11  [WARNING]   ILLEGAL PARKING ALERT | Vehicle ID=3 | Dwell=10.2 min | ...
   ```
 - **Annotated video** (if `--output` specified) — MP4 with all overlays
 - **Real-time window** — live detection, tracking, and alerts
