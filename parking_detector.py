@@ -181,86 +181,419 @@ class SortLiteTracker:
 
 
 # ──────────────────────────────────────────────
-# POLYGON ANNOTATION TOOL
+# MULTI-ZONE POLYGON ANNOTATOR  (with undo/redo)
 # ──────────────────────────────────────────────
-class PolygonAnnotator:
+
+# One distinct BGR colour per zone (cycles if >8 zones)
+ZONE_PALETTE: List[Tuple[int,int,int]] = [
+    (0,  80,  255),   # zone 0 – red-orange
+    (0,  200, 100),   # zone 1 – green
+    (255, 140,  0),   # zone 2 – cyan-blue
+    (180,  0, 180),   # zone 3 – magenta
+    (0,  220, 220),   # zone 4 – yellow
+    (255,  80,  80),  # zone 5 – blue
+    (30,  180, 255),  # zone 6 – amber
+    (100, 255, 150),  # zone 7 – lime
+]
+
+
+class MultiZoneAnnotator:
     """
-    Opens an OpenCV window showing the first frame.
-    Left-click to add polygon vertices.
-    Press ENTER/SPACE to confirm, ESC to cancel, 'r' to reset.
+    Interactive multi-zone polygon annotator.
+
+    Controls
+    --------
+    Left-click          Add vertex to the current polygon being drawn
+    ENTER / SPACE       Finish current polygon → save it, start a new one
+    Ctrl+Z  / Z         Undo last vertex (or the whole last finished zone)
+    Ctrl+Y  / Y         Redo last undone action
+    Ctrl+D  / D         Delete the zone whose centre is closest to the mouse
+    R                   Reset the vertex currently being drawn (discard in-progress)
+    F / DONE            Finalise all zones and exit
+    ESC                 Exit (returns whatever zones are complete so far)
     """
 
     def __init__(self, frame: np.ndarray):
-        self.frame = frame.copy()
-        self.points: List[Tuple[int,int]] = []
-        self.done = False
-        self.window = "[ ANNOTATE NO-PARKING ZONE ] Left-click to add points | ENTER=confirm | r=reset | ESC=cancel"
+        self.frame        = frame.copy()
+        self.window       = "ANNOTATE NO-PARKING ZONES  |  See console for controls"
 
+        # Completed zones  →  List of np.ndarray, each shape (N,2)
+        self.zones: List[List[Tuple[int,int]]]  = []
+
+        # Redo stack  →  holds zones that were undone
+        self._redo_stack: List[List[Tuple[int,int]]] = []
+
+        # Points of the polygon currently being drawn
+        self.current: List[Tuple[int,int]] = []
+
+        # Mouse position (for nearest-zone delete highlight)
+        self._mx: int = 0
+        self._my: int = 0
+
+        # Which zone is being hovered for delete (index or -1)
+        self._hover_delete: int = -1
+
+    # ── helpers ──────────────────────────────
+    def _zone_color(self, idx: int) -> Tuple[int,int,int]:
+        return ZONE_PALETTE[idx % len(ZONE_PALETTE)]
+
+    def _poly_centroid(self, pts: List[Tuple[int,int]]) -> Tuple[int,int]:
+        arr = np.array(pts, dtype=np.float32)
+        return int(arr[:,0].mean()), int(arr[:,1].mean())
+
+    def _nearest_zone_to_mouse(self) -> int:
+        """Return index of zone whose centroid is nearest to current mouse pos."""
+        best_idx, best_d = -1, float('inf')
+        for i, z in enumerate(self.zones):
+            cx, cy = self._poly_centroid(z)
+            d = (cx - self._mx)**2 + (cy - self._my)**2
+            if d < best_d:
+                best_d, best_idx = d, i
+        return best_idx
+
+    # ── undo / redo ──────────────────────────
+    def _undo(self):
+        if self.current:
+            # Undo last vertex of in-progress polygon
+            removed = self.current.pop()
+            # We don't push partial-vertex undos onto the redo stack
+        elif self.zones:
+            # Undo the last completed zone
+            zone = self.zones.pop()
+            self._redo_stack.append(zone)
+            log.info(f"Undo: removed zone {len(self.zones)} → {len(self.zones)} zones remain.")
+
+    def _redo(self):
+        if self._redo_stack:
+            zone = self._redo_stack.pop()
+            self.zones.append(zone)
+            log.info(f"Redo: restored zone → {len(self.zones)} zones total.")
+
+    def _delete_nearest(self):
+        idx = self._nearest_zone_to_mouse()
+        if idx >= 0:
+            removed = self.zones.pop(idx)
+            self._redo_stack.append(removed)
+            log.info(f"Deleted zone {idx} → {len(self.zones)} zones remain.")
+
+    def _finish_current(self):
+        """Close the current in-progress polygon and save it."""
+        if len(self.current) >= 3:
+            self.zones.append(list(self.current))
+            self._redo_stack.clear()   # new action clears redo
+            log.info(f"Zone {len(self.zones)-1} confirmed with {len(self.current)} vertices.")
+            self.current = []
+        else:
+            log.warning("Need ≥ 3 points to close a zone — keep clicking.")
+
+    # ── mouse callback ────────────────────────
     def _mouse_cb(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN and not self.done:
-            self.points.append((x, y))
+        self._mx, self._my = x, y
+        # Update hover highlight
+        self._hover_delete = self._nearest_zone_to_mouse()
 
-    def run(self) -> Optional[np.ndarray]:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.current.append((x, y))
+            self._redo_stack.clear()   # new click clears redo
+
+    # ── low-level drawing helpers ─────────────
+    @staticmethod
+    def _filled_rect(img, x1, y1, x2, y2, color, alpha=0.78):
+        """Semi-transparent filled rectangle."""
+        sub = img[y1:y2, x1:x2]
+        bg  = np.full_like(sub, color, dtype=np.uint8)
+        cv2.addWeighted(bg, alpha, sub, 1-alpha, 0, sub)
+        img[y1:y2, x1:x2] = sub
+
+    @staticmethod
+    def _outline_rect(img, x1, y1, x2, y2, color, thickness=1):
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+
+    @staticmethod
+    def _key_badge(img, x, y, label, badge_clr, text_clr=CLR_BLACK):
+        """Draw a small rounded pill badge for a key name, return right edge x."""
+        font       = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.42
+        thickness  = 1
+        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        pad_x, pad_y = 6, 3
+        bx1, by1 = x, y - th - pad_y
+        bx2, by2 = x + tw + pad_x*2, y + pad_y
+        # Fill + outline
+        cv2.rectangle(img, (bx1, by1), (bx2, by2), badge_clr, -1)
+        cv2.rectangle(img, (bx1, by1), (bx2, by2), CLR_WHITE,  1)
+        cv2.putText(img, label, (bx1 + pad_x, y), font, font_scale, text_clr, thickness, cv2.LINE_AA)
+        return bx2 + 5   # next x after badge
+
+    # ── render one frame ──────────────────────
+    def _render(self) -> np.ndarray:
+        display = self.frame.copy()
+        h, w = display.shape[:2]
+
+        # ════════════════════════════════════════
+        # 1. Draw all completed zones
+        # ════════════════════════════════════════
+        for i, zone in enumerate(self.zones):
+            clr  = self._zone_color(i)
+            pts  = np.array(zone, dtype=np.int32)
+            over = display.copy()
+            cv2.fillPoly(over, [pts], clr)
+            alpha = 0.40 if i != self._hover_delete else 0.58
+            cv2.addWeighted(over, alpha, display, 1 - alpha, 0, display)
+            # Border: thicker on hover
+            border_t = 3 if i == self._hover_delete else 2
+            cv2.polylines(display, [pts], isClosed=True, color=clr, thickness=border_t)
+            # Dot on each vertex
+            for pt in zone:
+                cv2.circle(display, tuple(pt), 4, CLR_WHITE, -1)
+                cv2.circle(display, tuple(pt), 4, clr,       1)
+            # Centroid label
+            cx, cy = self._poly_centroid(zone)
+            lbl  = f"Zone {i}"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            (tw, th), _ = cv2.getTextSize(lbl, font, 0.65, 2)
+            cv2.rectangle(display, (cx-tw//2-6, cy-th-5), (cx+tw//2+6, cy+5), CLR_BLACK, -1)
+            cv2.rectangle(display, (cx-tw//2-6, cy-th-5), (cx+tw//2+6, cy+5), clr, 1)
+            cv2.putText(display, lbl, (cx-tw//2, cy), font, 0.65, clr, 2, cv2.LINE_AA)
+            # Hover delete hint below label
+            if i == self._hover_delete:
+                hint = "[ D ] delete"
+                (hw, _), _ = cv2.getTextSize(hint, font, 0.42, 1)
+                cv2.putText(display, hint, (cx-hw//2, cy+18),
+                            font, 0.42, (0, 80, 255), 1, cv2.LINE_AA)
+
+        # ════════════════════════════════════════
+        # 2. Draw in-progress polygon
+        # ════════════════════════════════════════
+        next_idx = len(self.zones)
+        clr_cur  = self._zone_color(next_idx)
+        if len(self.current) >= 2:
+            pts_cur = np.array(self.current, dtype=np.int32)
+            cv2.polylines(display, [pts_cur], isClosed=False, color=clr_cur, thickness=2)
+        if len(self.current) >= 3:
+            pts_cur = np.array(self.current, dtype=np.int32)
+            over2   = display.copy()
+            cv2.fillPoly(over2, [pts_cur], clr_cur)
+            cv2.addWeighted(over2, 0.18, display, 0.82, 0, display)
+            cv2.polylines(display, [pts_cur], isClosed=True, color=clr_cur, thickness=1)
+        for pt in self.current:
+            cv2.circle(display, pt, 5, clr_cur,  -1)
+            cv2.circle(display, pt, 6, CLR_WHITE,  1)
+        # Rubber-band line to cursor
+        if self.current:
+            cv2.line(display, self.current[-1], (self._mx, self._my),
+                     clr_cur, 1, cv2.LINE_AA)
+
+        # ════════════════════════════════════════
+        # 3. Controls panel — top-left
+        # ════════════════════════════════════════
+        #
+        # Layout:
+        #   ┌─────────────────────────────────────┐
+        #   │  NO-PARKING ZONE ANNOTATOR          │  ← title bar
+        #   ├─────────────────────────────────────┤
+        #   │  [LClick]  Add vertex               │  ← draw group
+        #   │  [Enter]   Finish zone              │
+        #   ├·····································┤
+        #   │  [Z]       Undo vertex / zone       │  ← edit group
+        #   │  [Y]       Redo                     │
+        #   │  [D]       Delete nearest zone      │
+        #   │  [R]       Reset in-progress        │
+        #   ├·····································┤
+        #   │  [F] / [Esc]  Done → run detection  │  ← exit (green)
+        #   └─────────────────────────────────────┘
+
+        font     = cv2.FONT_HERSHEY_SIMPLEX
+        fs_title = 0.52
+        fs_row   = 0.46
+        lh       = 24          # line height px
+        pad_x    = 10          # left text margin inside panel
+        panel_x  = 10          # panel left edge on frame
+        panel_y  = 10          # panel top edge on frame
+        panel_w  = 330
+
+        # ── measure total height ──
+        n_rows       = 8       # title + 7 action rows
+        n_dividers   = 2       # thin lines
+        title_h      = 28
+        total_h      = title_h + n_rows * lh + n_dividers * 6 + 14
+
+        # ── dark semi-transparent background ──
+        px1, py1 = panel_x,           panel_y
+        px2, py2 = panel_x + panel_w, panel_y + total_h
+        self._filled_rect(display, px1, py1, px2, py2,
+                          color=(15, 15, 15), alpha=0.80)
+        self._outline_rect(display, px1, py1, px2, py2,
+                           color=(200, 200, 200), thickness=1)
+
+        # ── title bar ──
+        ty = py1 + title_h - 6
+        cv2.rectangle(display, (px1, py1), (px2, py1 + title_h),
+                      (40, 40, 40), -1)
+        cv2.rectangle(display, (px1, py1), (px2, py1 + title_h),
+                      (200, 200, 200), 1)
+        cv2.putText(display, "NO-PARKING ZONE ANNOTATOR",
+                    (px1 + pad_x, ty), font, fs_title,
+                    CLR_YELLOW, 1, cv2.LINE_AA)
+
+        # Helper to draw one action row
+        def _row(cursor_y, badge_label, badge_color, description, desc_color=CLR_WHITE):
+            rx = self._key_badge(display,
+                                 px1 + pad_x, cursor_y,
+                                 badge_label, badge_color)
+            cv2.putText(display, description,
+                        (rx, cursor_y), font, fs_row,
+                        desc_color, 1, cv2.LINE_AA)
+            return cursor_y + lh
+
+        # Helper for a thin divider
+        def _divider(cursor_y, gap=6):
+            mid = cursor_y + gap // 2
+            cv2.line(display,
+                     (px1 + pad_x, mid), (px2 - pad_x, mid),
+                     (120, 120, 120), 1)
+            return cursor_y + gap
+
+        # ── row content ──
+        # Badges: draw group = cyan; edit group = orange; exit = green
+        CYAN   = (200, 180,  20)   # BGR ≈ goldenrod (looks cyan on dark bg)
+        ORANGE = (0,  140, 255)
+        GREEN  = (40, 160,  40)
+        RED_B  = (40,  40, 200)
+
+        ry = py1 + title_h + 6    # start just below title
+
+        ry = _row(ry, "Left-Click", CYAN,   "Add a vertex to current polygon")
+        ry = _row(ry, "Enter/Space", CYAN,  "Finish zone  ->  start new one")
+
+        ry = _divider(ry)
+
+        ry = _row(ry, "Z / Ctrl+Z", ORANGE, "Undo last vertex or whole zone")
+        ry = _row(ry, "Y / Ctrl+Y", ORANGE, "Redo last undone zone")
+        ry = _row(ry, "D / Ctrl+D", RED_B,  "Delete zone nearest to cursor")
+        ry = _row(ry, "R",          ORANGE, "Reset in-progress polygon")
+
+        ry = _divider(ry)
+
+        _row(ry, "F  /  Esc",  GREEN,  "Done  ->  start detection", (80, 220, 80))
+
+        # ════════════════════════════════════════
+        # 4. Live status card — top-right
+        # ════════════════════════════════════════
+        status_lines = [
+            (f"Zones saved   : {len(self.zones)}",        CLR_CYAN),
+            (f"Current pts   : {len(self.current)}",
+             CLR_YELLOW if len(self.current) > 0 else (160,160,160)),
+            (f"Redo available: {len(self._redo_stack)}",
+             CLR_GREEN if self._redo_stack else (160,160,160)),
+        ]
+        sw   = 230
+        sh   = len(status_lines) * lh + 16
+        sx1  = w - sw - 10
+        sy1  = 10
+        sx2  = w - 10
+        sy2  = sy1 + sh
+        self._filled_rect(display, sx1, sy1, sx2, sy2,
+                          color=(15, 15, 15), alpha=0.78)
+        self._outline_rect(display, sx1, sy1, sx2, sy2,
+                           color=(200, 200, 200), thickness=1)
+        cv2.putText(display, "STATUS", (sx1 + 8, sy1 + 16),
+                    font, 0.48, CLR_YELLOW, 1, cv2.LINE_AA)
+        for k, (txt, clr) in enumerate(status_lines):
+            cv2.putText(display, txt, (sx1 + 8, sy1 + 16 + (k+1)*lh),
+                        font, 0.44, clr, 1, cv2.LINE_AA)
+
+        # ════════════════════════════════════════
+        # 5. Zone colour legend — bottom-left
+        # ════════════════════════════════════════
+        if self.zones:
+            leg_x, leg_y = 10, h - 14 - len(self.zones)*20 - 10
+            lw = 200
+            lh2 = len(self.zones) * 20 + 14
+            self._filled_rect(display, leg_x, leg_y, leg_x+lw, leg_y+lh2,
+                              color=(15,15,15), alpha=0.78)
+            self._outline_rect(display, leg_x, leg_y, leg_x+lw, leg_y+lh2,
+                               color=(200,200,200), thickness=1)
+            cv2.putText(display, "Zone legend", (leg_x+8, leg_y+12),
+                        font, 0.42, (200,200,200), 1, cv2.LINE_AA)
+            for zi, zone in enumerate(self.zones):
+                zclr = self._zone_color(zi)
+                zy = leg_y + 12 + (zi+1)*20
+                cv2.rectangle(display, (leg_x+8, zy-10), (leg_x+22, zy+2), zclr, -1)
+                cv2.putText(display, f"Zone {zi}  ({len(zone)} pts)",
+                            (leg_x+28, zy), font, 0.42, zclr, 1, cv2.LINE_AA)
+
+        # ════════════════════════════════════════
+        # 6. Centre-bottom hint when no zones yet
+        # ════════════════════════════════════════
+        if len(self.zones) == 0 and len(self.current) == 0:
+            hint = "Click on the frame to start drawing your first no-parking zone"
+            (hw, _), _ = cv2.getTextSize(hint, font, 0.52, 1)
+            hx = max(10, w//2 - hw//2)
+            hy = h - 18
+            cv2.putText(display, hint, (hx+1, hy+1), font, 0.52, CLR_BLACK, 2, cv2.LINE_AA)
+            cv2.putText(display, hint, (hx,   hy),   font, 0.52, CLR_YELLOW,1, cv2.LINE_AA)
+
+        return display
+
+    # ── main loop ────────────────────────────
+    def run(self) -> List[np.ndarray]:
+        """
+        Returns a list of np.ndarray polygons (each shape [N,2], dtype int32).
+        Returns empty list only if user exits without annotating anything.
+        """
         cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window, 1100, 700)
+        cv2.resizeWindow(self.window, 1200, 750)
         cv2.setMouseCallback(self.window, self._mouse_cb)
 
+        log.info("=== ANNOTATION WINDOW OPEN ===")
+        log.info("Left-click to place vertices | ENTER to finish zone | F/ESC to exit")
+
+        ctrl_held = False
+
         while True:
-            display = self.frame.copy()
-            h, w = display.shape[:2]
-
-            # Instructions overlay
-            instructions = [
-                "LEFT-CLICK to place polygon vertices",
-                "ENTER / SPACE  → confirm zone",
-                "'r'            → reset points",
-                "ESC            → cancel",
-            ]
-            for i, txt in enumerate(instructions):
-                cv2.putText(display, txt, (10, 25 + i*22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, CLR_BLACK, 3, cv2.LINE_AA)
-                cv2.putText(display, txt, (10, 25 + i*22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, CLR_WHITE, 1, cv2.LINE_AA)
-
-            # Draw polygon so far
-            if len(self.points) >= 2:
-                pts_arr = np.array(self.points, dtype=np.int32)
-                cv2.polylines(display, [pts_arr], isClosed=False,
-                              color=CLR_YELLOW, thickness=2)
-            for pt in self.points:
-                cv2.circle(display, pt, 5, CLR_RED, -1)
-
-            # Close polygon preview when ≥3 points
-            if len(self.points) >= 3:
-                pts_arr = np.array(self.points, dtype=np.int32)
-                overlay = display.copy()
-                cv2.fillPoly(overlay, [pts_arr], CLR_ZONE)
-                cv2.addWeighted(overlay, 0.25, display, 0.75, 0, display)
-                cv2.polylines(display, [pts_arr], isClosed=True,
-                              color=CLR_ZONE, thickness=2)
-
-            cv2.putText(display, f"Points: {len(self.points)}", (w-170, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, CLR_YELLOW, 2)
-
+            display = self._render()
             cv2.imshow(self.window, display)
             key = cv2.waitKey(30) & 0xFF
 
-            if key in (13, 32):  # ENTER or SPACE
-                if len(self.points) >= 3:
-                    log.info(f"Zone confirmed with {len(self.points)} vertices.")
-                    cv2.destroyAllWindows()
-                    return np.array(self.points, dtype=np.int32)
-                else:
-                    log.warning("Need at least 3 points to define a zone.")
-            elif key == ord('r'):
-                self.points = []
-            elif key == 27:  # ESC
-                cv2.destroyAllWindows()
-                log.warning("Annotation cancelled by user.")
-                return None
+            if key == 255:   # no key
+                continue
+
+            # Track Ctrl state (approximation via key codes)
+            # OpenCV doesn't expose modifier state directly on all platforms,
+            # so we support BOTH bare keys and their Ctrl equivalents.
+
+            if key in (13, 32):                # ENTER or SPACE → finish zone
+                self._finish_current()
+
+            elif key in (26, ord('z'), ord('Z')):   # Ctrl+Z or Z
+                self._undo()
+
+            elif key in (25, ord('y'), ord('Y')):   # Ctrl+Y or Y
+                self._redo()
+
+            elif key in (4, ord('d'), ord('D')):    # Ctrl+D or D
+                self._delete_nearest()
+
+            elif key in (ord('r'), ord('R')):       # R → reset in-progress
+                if self.current:
+                    log.info(f"Reset in-progress polygon ({len(self.current)} pts discarded).")
+                    self.current = []
+
+            elif key in (ord('f'), ord('F'), 27):   # F or ESC → done
+                # Auto-close any open polygon before exiting
+                if len(self.current) >= 3:
+                    log.info("Auto-closing in-progress polygon on exit.")
+                    self._finish_current()
+                if len(self.zones) == 0:
+                    log.warning("No zones defined — using default centre rectangle.")
+                break
 
         cv2.destroyAllWindows()
-        return None
+
+        result = [np.array(z, dtype=np.int32) for z in self.zones]
+        log.info(f"Annotation complete: {len(result)} zone(s) defined.")
+        return result
 
 
 # ──────────────────────────────────────────────
@@ -337,12 +670,12 @@ class VehicleDetector:
 # ──────────────────────────────────────────────
 class ParkingSpotManager:
     """
-    Divides a rectangular region (outside the no-parking zone) into
+    Divides a rectangular region (outside ALL no-parking zones) into
     a grid of parking spots and checks occupancy by overlap with tracks.
     """
 
     def __init__(self, frame_w: int, frame_h: int,
-                 no_park_poly: Optional[np.ndarray],
+                 no_park_polys: List[np.ndarray],
                  rows=PARKING_SPOT_GRID_ROWS, cols=PARKING_SPOT_GRID_COLS):
         self.spots: List[ParkingSpot] = []
         # Place the grid in the BOTTOM portion of the frame
@@ -361,11 +694,14 @@ class ParkingSpotManager:
                 x2 = x1 + cell_w - 4
                 y2 = y1 + cell_h - 4
                 spot = ParkingSpot(sid, BBox(x1, y1, x2, y2))
-                # Only include spots not heavily overlapping the no-park zone
-                if no_park_poly is not None:
-                    cx, cy = (x1+x2)//2, (y1+y2)//2
-                    if cv2.pointPolygonTest(no_park_poly, (cx, cy), False) >= 0:
-                        continue
+                # Exclude spot if its centroid falls inside ANY no-parking zone
+                cx, cy = (x1+x2)//2, (y1+y2)//2
+                in_any_zone = any(
+                    cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0
+                    for poly in no_park_polys
+                )
+                if in_any_zone:
+                    continue
                 self.spots.append(spot)
                 sid += 1
 
@@ -428,14 +764,16 @@ class AlertManager:
 # ──────────────────────────────────────────────
 # ZONE CHECKER
 # ──────────────────────────────────────────────
-def is_in_zone(poly: np.ndarray, bbox: BBox, threshold: float = 0.5) -> bool:
+def is_in_any_zone(polys: List[np.ndarray], bbox: BBox) -> bool:
     """
-    Returns True if the centre of the bounding box is inside the polygon.
-    A fraction check (what fraction of bbox corners are inside) can be used
-    for stricter/looser matching.
+    Returns True if the centroid of the bounding box lies inside
+    ANY of the supplied polygons.
     """
-    cx, cy = bbox.cx, bbox.cy
-    return cv2.pointPolygonTest(poly, (float(cx), float(cy)), False) >= 0
+    cx, cy = float(bbox.cx), float(bbox.cy)
+    return any(
+        cv2.pointPolygonTest(poly, (cx, cy), False) >= 0
+        for poly in polys
+    )
 
 
 # ──────────────────────────────────────────────
@@ -445,20 +783,27 @@ def draw_hud(frame: np.ndarray,
              tracks: List[Track],
              spot_mgr: ParkingSpotManager,
              alert_mgr: AlertManager,
-             zone_poly: np.ndarray,
+             zone_polys: List[np.ndarray],
              frame_no: int,
              fps: float):
     h, w = frame.shape[:2]
 
-    # ── Zone overlay ──
-    overlay = frame.copy()
-    cv2.fillPoly(overlay, [zone_poly], CLR_ZONE)
-    cv2.addWeighted(overlay, 0.20, frame, 0.80, 0, frame)
-    cv2.polylines(frame, [zone_poly], True, CLR_ZONE, 2)
-    # Zone label
-    zx, zy = zone_poly[0]
-    cv2.putText(frame, "NO PARKING ZONE", (int(zx)+4, int(zy)-8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, CLR_ZONE, 2, cv2.LINE_AA)
+    # ── Zone overlays (one per zone, each in its own colour) ──
+    for i, zone_poly in enumerate(zone_polys):
+        clr = ZONE_PALETTE[i % len(ZONE_PALETTE)]
+        overlay = frame.copy()
+        cv2.fillPoly(overlay, [zone_poly], clr)
+        cv2.addWeighted(overlay, 0.18, frame, 0.82, 0, frame)
+        cv2.polylines(frame, [zone_poly], True, clr, 2)
+        # Zone label at centroid
+        cx = int(zone_poly[:, 0].mean())
+        cy = int(zone_poly[:, 1].mean())
+        label = f"NO PARK Z{i}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+        cv2.rectangle(frame, (cx-tw//2-3, cy-th-3), (cx+tw//2+3, cy+4),
+                      CLR_BLACK, -1)
+        cv2.putText(frame, label, (cx-tw//2, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, clr, 2, cv2.LINE_AA)
 
     # ── Parking spots ──
     spot_mgr.draw(frame)
@@ -522,35 +867,46 @@ class IllegalParkingDetector:
                  dwell_minutes: float = ILLEGAL_DWELL_MINUTES,
                  output_path: Optional[str] = None,
                  show_window: bool = True,
-                 zone_points: Optional[List[Tuple[int,int]]] = None):
+                 zone_points: Optional[List] = None):
         self.video_path = video_path
         self.dwell_minutes = dwell_minutes
         self.output_path = output_path
         self.show_window = show_window
-        self.preset_zone = (np.array(zone_points, dtype=np.int32)
-                            if zone_points else None)
 
-        self.detector = VehicleDetector()
-        self.tracker  = SortLiteTracker()
+        # zone_points may be:
+        #   None               → open annotation window
+        #   [[x,y],...]        → single zone (old format, auto-wrapped)
+        #   [[[x,y],...], ...] → multiple zones
+        self.preset_zones: Optional[List[np.ndarray]] = None
+        if zone_points is not None:
+            # Detect if it's a flat list of [x,y] pairs (single zone)
+            if zone_points and not isinstance(zone_points[0][0], (list, tuple)):
+                zone_points = [zone_points]
+            self.preset_zones = [
+                np.array(z, dtype=np.int32) for z in zone_points
+            ]
+
+        self.detector  = VehicleDetector()
+        self.tracker   = SortLiteTracker()
         self.alert_mgr = AlertManager(dwell_minutes)
 
     # ── STEP 1: Annotation ──────────────────
-    def _annotate_zone(self, first_frame: np.ndarray) -> np.ndarray:
-        if self.preset_zone is not None:
-            log.info("Using preset zone polygon.")
-            return self.preset_zone
-        log.info("Opening annotation window …")
-        ann = PolygonAnnotator(first_frame)
-        poly = ann.run()
-        if poly is None:
-            # Fallback: centre 40% of frame
+    def _annotate_zones(self, first_frame: np.ndarray) -> List[np.ndarray]:
+        if self.preset_zones is not None:
+            log.info(f"Using {len(self.preset_zones)} preset zone(s).")
+            return self.preset_zones
+        log.info("Opening multi-zone annotation window …")
+        ann = MultiZoneAnnotator(first_frame)
+        zones = ann.run()
+        if not zones:
+            # Fallback: default centre rectangle as one zone
             h, w = first_frame.shape[:2]
-            poly = np.array([
+            zones = [np.array([
                 [w//4, h//4], [3*w//4, h//4],
                 [3*w//4, 3*h//4], [w//4, 3*h//4],
-            ], dtype=np.int32)
-            log.warning("No zone annotated — using default centre rectangle.")
-        return poly
+            ], dtype=np.int32)]
+            log.warning("No zones annotated — using default centre rectangle.")
+        return zones
 
     # ── STEP 2 & 3: Process video ───────────
     def run(self):
@@ -570,11 +926,12 @@ class IllegalParkingDetector:
         if not ret:
             log.error("Could not read first frame."); return
 
-        # STEP 1 — Annotate zone
-        zone_poly = self._annotate_zone(first_frame)
+        # STEP 1 — Annotate zones
+        zone_polys = self._annotate_zones(first_frame)
+        log.info(f"{len(zone_polys)} no-parking zone(s) active.")
 
-        # Spot manager
-        spot_mgr = ParkingSpotManager(frame_w, frame_h, zone_poly)
+        # Spot manager — exclude spots inside any zone
+        spot_mgr = ParkingSpotManager(frame_w, frame_h, zone_polys)
         log.info(f"Parking spots defined: {spot_mgr.total}")
 
         # Output writer
@@ -614,7 +971,7 @@ class IllegalParkingDetector:
             # ── STEP 3: Zone check + dwell timing ──
             for t in tracks:
                 if t.missed == 0:
-                    if is_in_zone(zone_poly, t.bbox):
+                    if is_in_any_zone(zone_polys, t.bbox):
                         t.enter_zone()
                         self.alert_mgr.check(t)
                     else:
@@ -631,7 +988,7 @@ class IllegalParkingDetector:
 
             # ── Draw HUD ──
             draw_hud(frame, tracks, spot_mgr, self.alert_mgr,
-                     zone_poly, frame_no, display_fps)
+                     zone_polys, frame_no, display_fps)
 
             if writer:
                 writer.write(frame)
@@ -650,12 +1007,14 @@ class IllegalParkingDetector:
         # Summary
         log.info("=" * 60)
         log.info(f"SUMMARY  |  Frames processed: {frame_no}")
-        log.info(f"         |  Total alerts fired: {self.alert_mgr.alert_count}")
-        log.info(f"         |  Output: {self.output_path or 'Not saved'}")
+        log.info(f"         |  Zones monitored : {len(zone_polys)}")
+        log.info(f"         |  Total alerts    : {self.alert_mgr.alert_count}")
+        log.info(f"         |  Output          : {self.output_path or 'Not saved'}")
         log.info("=" * 60)
 
         return {
             "frames_processed": frame_no,
+            "zones": len(zone_polys),
             "total_alerts": self.alert_mgr.alert_count,
             "output_path": self.output_path,
         }
@@ -675,14 +1034,19 @@ def main():
     parser.add_argument("--no-display", action="store_true",
                         help="Disable real-time window (headless mode)")
     parser.add_argument("--zone", default=None,
-                        help='Pre-defined zone as JSON, e.g. \'[[100,100],[400,100],[400,400],[100,400]]\'')
+                        help=(
+                            'Pre-defined zone(s) as JSON. '
+                            'Single zone: \'[[100,100],[400,100],[400,400],[100,400]]\'. '
+                            'Multiple zones: \'[[[100,100],[400,100],[400,400],[100,400]],'
+                            '[[500,100],[700,100],[700,300],[500,300]]]\''
+                        ))
     args = parser.parse_args()
 
     zone_points = None
     if args.zone:
         try:
             zone_points = json.loads(args.zone)
-            log.info(f"Using preset zone: {zone_points}")
+            log.info(f"Using preset zone(s): {zone_points}")
         except json.JSONDecodeError:
             log.warning("Could not parse --zone JSON; will open annotation window.")
 

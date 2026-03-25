@@ -1,11 +1,17 @@
-2026-03-24 18:56:34,247  [INFO]  Video: 3840×2160 @ 25.0 fps, 11309 frames
-2026-03-24 18:56:34,442  [INFO]  Opening annotation window …
-2026-03-24 18:56:51,191  [WARNING]  Annotation cancelled by user.
-2026-03-24 18:56:51,196  [WARNING]  No zone annotated — using default centre rectangle.
-2026-03-24 18:56:51,197  [INFO]  Parking spots defined: 10
-2026-03-24 18:56:54,925  [INFO]  Stopped by user.
-2026-03-24 18:56:54,993  [INFO]  ============================================================
-2026-03-24 18:56:54,993  [INFO]  SUMMARY  |  Frames processed: 27
-2026-03-24 18:56:54,993  [INFO]           |  Total alerts fired: 0
-2026-03-24 18:56:54,993  [INFO]           |  Output: Not saved
-2026-03-24 18:56:54,993  [INFO]  ============================================================
+2026-03-25 09:16:56,171  [INFO]  Video: 3840×2160 @ 25.0 fps, 11309 frames
+2026-03-25 09:16:56,427  [INFO]  Opening multi-zone annotation window …
+2026-03-25 09:16:56,505  [INFO]  === ANNOTATION WINDOW OPEN ===
+2026-03-25 09:16:56,505  [INFO]  Left-click to place vertices | ENTER to finish zone | F/ESC to exit
+2026-03-25 09:17:15,053  [INFO]  Zone 0 confirmed with 5 vertices.
+2026-03-25 09:17:56,052  [INFO]  Reset in-progress polygon (1 pts discarded).
+2026-03-25 09:18:06,760  [INFO]  Zone 1 confirmed with 4 vertices.
+2026-03-25 09:18:18,955  [INFO]  Annotation complete: 2 zone(s) defined.
+2026-03-25 09:18:18,961  [INFO]  2 no-parking zone(s) active.
+2026-03-25 09:18:18,962  [INFO]  Parking spots defined: 10
+2026-03-25 09:18:19,847  [INFO]  Stopped by user.
+2026-03-25 09:18:19,906  [INFO]  ============================================================
+2026-03-25 09:18:19,906  [INFO]  SUMMARY  |  Frames processed: 3
+2026-03-25 09:18:19,907  [INFO]           |  Zones monitored : 2
+2026-03-25 09:18:19,908  [INFO]           |  Total alerts    : 0
+2026-03-25 09:18:19,908  [INFO]           |  Output          : Not saved
+2026-03-25 09:18:19,910  [INFO]  ============================================================
