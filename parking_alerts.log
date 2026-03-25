@@ -1,17 +1,17 @@
-2026-03-25 09:16:56,171  [INFO]  Video: 3840×2160 @ 25.0 fps, 11309 frames
-2026-03-25 09:16:56,427  [INFO]  Opening multi-zone annotation window …
-2026-03-25 09:16:56,505  [INFO]  === ANNOTATION WINDOW OPEN ===
-2026-03-25 09:16:56,505  [INFO]  Left-click to place vertices | ENTER to finish zone | F/ESC to exit
-2026-03-25 09:17:15,053  [INFO]  Zone 0 confirmed with 5 vertices.
-2026-03-25 09:17:56,052  [INFO]  Reset in-progress polygon (1 pts discarded).
-2026-03-25 09:18:06,760  [INFO]  Zone 1 confirmed with 4 vertices.
-2026-03-25 09:18:18,955  [INFO]  Annotation complete: 2 zone(s) defined.
-2026-03-25 09:18:18,961  [INFO]  2 no-parking zone(s) active.
-2026-03-25 09:18:18,962  [INFO]  Parking spots defined: 10
-2026-03-25 09:18:19,847  [INFO]  Stopped by user.
-2026-03-25 09:18:19,906  [INFO]  ============================================================
-2026-03-25 09:18:19,906  [INFO]  SUMMARY  |  Frames processed: 3
-2026-03-25 09:18:19,907  [INFO]           |  Zones monitored : 2
-2026-03-25 09:18:19,908  [INFO]           |  Total alerts    : 0
-2026-03-25 09:18:19,908  [INFO]           |  Output          : Not saved
-2026-03-25 09:18:19,910  [INFO]  ============================================================
+2026-03-25 10:19:08,264  [INFO]  Video: 3840×2160 @ 25.0 fps, 11309 frames
+2026-03-25 10:19:08,440  [INFO]  Opening multi-zone annotation window …
+2026-03-25 10:19:08,501  [INFO]  === ANNOTATION WINDOW OPEN ===
+2026-03-25 10:19:08,501  [INFO]  Left-click to place vertices | ENTER to finish zone | F/ESC to exit
+2026-03-25 10:19:19,345  [INFO]  Zone 0 confirmed with 4 vertices.
+2026-03-25 10:19:20,509  [INFO]  Annotation complete: 1 zone(s) defined.
+2026-03-25 10:19:20,509  [INFO]  1 no-parking zone(s) active.
+2026-03-25 10:19:20,511  [INFO]  Parking spots defined: 10
+2026-03-25 10:20:14,360  [WARNING]    ILLEGAL PARKING ALERT  |  Vehicle ID=14  |  Dwell=0.0 min  |  Threshold=0.0 min  |  BBox=(3443,1390,3542,1424)
+2026-03-25 10:20:29,999  [WARNING]    ILLEGAL PARKING ALERT  |  Vehicle ID=34  |  Dwell=0.0 min  |  Threshold=0.0 min  |  BBox=(878,1401,974,1438)
+2026-03-25 10:21:12,545  [INFO]  Stopped by user.
+2026-03-25 10:21:12,596  [INFO]  ============================================================
+2026-03-25 10:21:12,596  [INFO]  OUTPUT   |  Frames processed: 579
+2026-03-25 10:21:12,598  [INFO]           |  Zones monitored : 1
+2026-03-25 10:21:12,598  [INFO]           |  Total alerts    : 2
+2026-03-25 10:21:12,599  [INFO]           |  Output          : Not saved
+2026-03-25 10:21:12,599  [INFO]  ============================================================

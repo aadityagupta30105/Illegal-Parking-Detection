@@ -1,22 +1,3 @@
-"""
-=============================================================
-  REAL-TIME ILLEGAL PARKING DETECTION SYSTEM
-  Course: BCSE403L - Digital Image Processing
-  Author: Senior CV Engineer Implementation
-=============================================================
-
-Architecture:
-  1. Video ingestion  →  Frame extraction
-  2. Interactive ROI annotation (polygon) via OpenCV window
-  3. Background Subtraction + Contour detection for motion
-  4. SORT-lite tracker (IoU-based centroid tracking, no deep deps)
-  5. Dwell-time tracking per vehicle ID
-  6. Alert system when dwell > T minutes
-  7. Parking-spot occupancy counter (outside ROI)
-
-Dependencies: opencv-python, numpy, scipy, Pillow
-"""
-
 import cv2
 import numpy as np
 import time
@@ -298,40 +279,48 @@ class MultiZoneAnnotator:
 
     # ── low-level drawing helpers ─────────────
     @staticmethod
-    def _filled_rect(img, x1, y1, x2, y2, color, alpha=0.78):
-        """Semi-transparent filled rectangle."""
+    def _filled_rect(img, x1, y1, x2, y2, color, alpha=0.82):
+        """Semi-transparent filled rectangle (clamps to image bounds)."""
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
+        if x2 <= x1 or y2 <= y1:
+            return
         sub = img[y1:y2, x1:x2]
         bg  = np.full_like(sub, color, dtype=np.uint8)
-        cv2.addWeighted(bg, alpha, sub, 1-alpha, 0, sub)
+        cv2.addWeighted(bg, alpha, sub, 1 - alpha, 0, sub)
         img[y1:y2, x1:x2] = sub
 
     @staticmethod
-    def _outline_rect(img, x1, y1, x2, y2, color, thickness=1):
+    def _outline_rect(img, x1, y1, x2, y2, color, thickness=2):
         cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
 
     @staticmethod
     def _key_badge(img, x, y, label, badge_clr, text_clr=CLR_BLACK):
-        """Draw a small rounded pill badge for a key name, return right edge x."""
-        font       = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.42
-        thickness  = 1
-        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-        pad_x, pad_y = 6, 3
-        bx1, by1 = x, y - th - pad_y
-        bx2, by2 = x + tw + pad_x*2, y + pad_y
-        # Fill + outline
+        """
+        Draw a bold key-badge pill.  Font scale 0.75, thickness 2.
+        Returns the x coordinate just after the badge (for description text).
+        y is the text baseline.
+        """
+        font  = cv2.FONT_HERSHEY_SIMPLEX
+        fs    = 0.70          # badge font scale  ← LARGE
+        thick = 2
+        (tw, th), _ = cv2.getTextSize(label, font, fs, thick)
+        px, py = 10, 6        # horizontal / vertical padding inside badge
+        bx1, by1 = x,          y - th - py
+        bx2, by2 = x + tw + px*2, y + py
         cv2.rectangle(img, (bx1, by1), (bx2, by2), badge_clr, -1)
-        cv2.rectangle(img, (bx1, by1), (bx2, by2), CLR_WHITE,  1)
-        cv2.putText(img, label, (bx1 + pad_x, y), font, font_scale, text_clr, thickness, cv2.LINE_AA)
-        return bx2 + 5   # next x after badge
+        cv2.rectangle(img, (bx1, by1), (bx2, by2), CLR_WHITE,  2)
+        cv2.putText(img, label, (bx1 + px, y), font, fs, text_clr, thick, cv2.LINE_AA)
+        return bx2 + 12       # gap between badge and description
 
     # ── render one frame ──────────────────────
     def _render(self) -> np.ndarray:
         display = self.frame.copy()
-        h, w = display.shape[:2]
+        h, w    = display.shape[:2]
+        font    = cv2.FONT_HERSHEY_SIMPLEX
 
         # ════════════════════════════════════════
-        # 1. Draw all completed zones
+        # 1. Completed zones
         # ════════════════════════════════════════
         for i, zone in enumerate(self.zones):
             clr  = self._zone_color(i)
@@ -340,199 +329,246 @@ class MultiZoneAnnotator:
             cv2.fillPoly(over, [pts], clr)
             alpha = 0.40 if i != self._hover_delete else 0.58
             cv2.addWeighted(over, alpha, display, 1 - alpha, 0, display)
-            # Border: thicker on hover
-            border_t = 3 if i == self._hover_delete else 2
+            border_t = 4 if i == self._hover_delete else 2
             cv2.polylines(display, [pts], isClosed=True, color=clr, thickness=border_t)
-            # Dot on each vertex
             for pt in zone:
-                cv2.circle(display, tuple(pt), 4, CLR_WHITE, -1)
-                cv2.circle(display, tuple(pt), 4, clr,       1)
-            # Centroid label
+                cv2.circle(display, tuple(pt), 6, CLR_WHITE, -1)
+                cv2.circle(display, tuple(pt), 6, clr,        2)
             cx, cy = self._poly_centroid(zone)
-            lbl  = f"Zone {i}"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            (tw, th), _ = cv2.getTextSize(lbl, font, 0.65, 2)
-            cv2.rectangle(display, (cx-tw//2-6, cy-th-5), (cx+tw//2+6, cy+5), CLR_BLACK, -1)
-            cv2.rectangle(display, (cx-tw//2-6, cy-th-5), (cx+tw//2+6, cy+5), clr, 1)
-            cv2.putText(display, lbl, (cx-tw//2, cy), font, 0.65, clr, 2, cv2.LINE_AA)
-            # Hover delete hint below label
+            lbl = f"Zone {i}"
+            (tw, th), _ = cv2.getTextSize(lbl, font, 0.90, 2)
+            cv2.rectangle(display,
+                          (cx - tw//2 - 8, cy - th - 6),
+                          (cx + tw//2 + 8, cy + 6), CLR_BLACK, -1)
+            cv2.rectangle(display,
+                          (cx - tw//2 - 8, cy - th - 6),
+                          (cx + tw//2 + 8, cy + 6), clr, 2)
+            cv2.putText(display, lbl, (cx - tw//2, cy),
+                        font, 0.90, clr, 2, cv2.LINE_AA)
             if i == self._hover_delete:
-                hint = "[ D ] delete"
-                (hw, _), _ = cv2.getTextSize(hint, font, 0.42, 1)
-                cv2.putText(display, hint, (cx-hw//2, cy+18),
-                            font, 0.42, (0, 80, 255), 1, cv2.LINE_AA)
+                hint = "[ D ]  delete this zone"
+                (hw, _), _ = cv2.getTextSize(hint, font, 0.65, 2)
+                cv2.putText(display, hint, (cx - hw//2, cy + 28),
+                            font, 0.65, (0, 80, 255), 2, cv2.LINE_AA)
 
         # ════════════════════════════════════════
-        # 2. Draw in-progress polygon
+        # 2. In-progress polygon
         # ════════════════════════════════════════
         next_idx = len(self.zones)
         clr_cur  = self._zone_color(next_idx)
         if len(self.current) >= 2:
             pts_cur = np.array(self.current, dtype=np.int32)
-            cv2.polylines(display, [pts_cur], isClosed=False, color=clr_cur, thickness=2)
+            cv2.polylines(display, [pts_cur], isClosed=False,
+                          color=clr_cur, thickness=3)
         if len(self.current) >= 3:
             pts_cur = np.array(self.current, dtype=np.int32)
             over2   = display.copy()
             cv2.fillPoly(over2, [pts_cur], clr_cur)
             cv2.addWeighted(over2, 0.18, display, 0.82, 0, display)
-            cv2.polylines(display, [pts_cur], isClosed=True, color=clr_cur, thickness=1)
+            cv2.polylines(display, [pts_cur], isClosed=True,
+                          color=clr_cur, thickness=2)
         for pt in self.current:
-            cv2.circle(display, pt, 5, clr_cur,  -1)
-            cv2.circle(display, pt, 6, CLR_WHITE,  1)
-        # Rubber-band line to cursor
+            cv2.circle(display, pt, 7,  clr_cur, -1)
+            cv2.circle(display, pt, 8,  CLR_WHITE, 2)
         if self.current:
-            cv2.line(display, self.current[-1], (self._mx, self._my),
-                     clr_cur, 1, cv2.LINE_AA)
+            cv2.line(display, self.current[-1],
+                     (self._mx, self._my), clr_cur, 2, cv2.LINE_AA)
 
         # ════════════════════════════════════════
         # 3. Controls panel — top-left
         # ════════════════════════════════════════
-        #
-        # Layout:
-        #   ┌─────────────────────────────────────┐
-        #   │  NO-PARKING ZONE ANNOTATOR          │  ← title bar
-        #   ├─────────────────────────────────────┤
-        #   │  [LClick]  Add vertex               │  ← draw group
-        #   │  [Enter]   Finish zone              │
-        #   ├·····································┤
-        #   │  [Z]       Undo vertex / zone       │  ← edit group
-        #   │  [Y]       Redo                     │
-        #   │  [D]       Delete nearest zone      │
-        #   │  [R]       Reset in-progress        │
-        #   ├·····································┤
-        #   │  [F] / [Esc]  Done → run detection  │  ← exit (green)
-        #   └─────────────────────────────────────┘
+        # Typography constants  (all LARGE)
+        FS_TITLE = 0.85        # title bar font scale
+        FS_DESC  = 0.72        # description text font scale
+        TH_BADGE = 2           # badge text thickness
+        TH_DESC  = 2           # description text thickness
+        LH       = 46          # row line-height  (px between baselines)
+        PAD_L    = 16          # left inner padding
+        DIV_H    = 14          # divider gap height
 
-        font     = cv2.FONT_HERSHEY_SIMPLEX
-        fs_title = 0.52
-        fs_row   = 0.46
-        lh       = 24          # line height px
-        pad_x    = 10          # left text margin inside panel
-        panel_x  = 10          # panel left edge on frame
-        panel_y  = 10          # panel top edge on frame
-        panel_w  = 330
+        # Badge colour palette
+        GOLD   = (20,  160, 220)   # BGR → warm gold
+        ORANGE = (0,   120, 255)   # BGR → orange
+        GREEN  = (30,  140,  30)   # BGR → dark green
+        RED_B  = (30,   30, 190)   # BGR → dark red
 
-        # ── measure total height ──
-        n_rows       = 8       # title + 7 action rows
-        n_dividers   = 2       # thin lines
-        title_h      = 28
-        total_h      = title_h + n_rows * lh + n_dividers * 6 + 14
+        # ── measure badge widths so panel is wide enough ──
+        def badge_w(label):
+            fs, thick = 0.70, 2
+            (tw, _), _ = cv2.getTextSize(label, font, fs, thick)
+            return tw + 10*2 + 12   # pad + gap
 
-        # ── dark semi-transparent background ──
-        px1, py1 = panel_x,           panel_y
-        px2, py2 = panel_x + panel_w, panel_y + total_h
+        rows_data = [
+            ("Left-Click",  GOLD,   "Add a vertex to current polygon",   CLR_WHITE),
+            ("Enter/Space", GOLD,   "Finish zone  →  start a new one",   CLR_WHITE),
+            None,           # divider
+            ("Z / Ctrl+Z",  ORANGE, "Undo last vertex or whole zone",     CLR_WHITE),
+            ("Y / Ctrl+Y",  ORANGE, "Redo last undone zone",              CLR_WHITE),
+            ("D / Ctrl+D",  RED_B,  "Delete zone nearest to cursor",      (100,160,255)),
+            ("R",           ORANGE, "Reset in-progress polygon",          CLR_WHITE),
+            None,           # divider
+            ("F  /  Esc",   GREEN,  "Done  →  begin detection",           (100, 255, 100)),
+        ]
+
+        # Find widest badge to set panel width
+        max_badge = max(badge_w(r[0]) for r in rows_data if r is not None)
+
+        # Find widest description
+        def desc_w(txt):
+            (tw, _), _ = cv2.getTextSize(txt, font, FS_DESC, TH_DESC)
+            return tw
+
+        max_desc = max(desc_w(r[2]) for r in rows_data if r is not None)
+
+        TITLE_H  = 52
+        panel_w  = PAD_L + max_badge + max_desc + PAD_L
+        panel_w  = max(panel_w, 560)   # minimum 560 px
+
+        n_real   = sum(1 for r in rows_data if r is not None)
+        n_div    = sum(1 for r in rows_data if r is None)
+        panel_h  = TITLE_H + n_real * LH + n_div * DIV_H + 20
+
+        px1, py1 = 14, 14
+        px2, py2 = px1 + panel_w, py1 + panel_h
+
+        # Background + border
         self._filled_rect(display, px1, py1, px2, py2,
-                          color=(15, 15, 15), alpha=0.80)
+                          color=(10, 10, 10), alpha=0.88)
         self._outline_rect(display, px1, py1, px2, py2,
-                           color=(200, 200, 200), thickness=1)
+                           color=(220, 220, 220), thickness=2)
 
-        # ── title bar ──
-        ty = py1 + title_h - 6
-        cv2.rectangle(display, (px1, py1), (px2, py1 + title_h),
-                      (40, 40, 40), -1)
-        cv2.rectangle(display, (px1, py1), (px2, py1 + title_h),
-                      (200, 200, 200), 1)
+        # Title bar
+        cv2.rectangle(display, (px1, py1), (px2, py1 + TITLE_H),
+                      (35, 35, 35), -1)
+        cv2.rectangle(display, (px1, py1), (px2, py1 + TITLE_H),
+                      (220, 220, 220), 2)
         cv2.putText(display, "NO-PARKING ZONE ANNOTATOR",
-                    (px1 + pad_x, ty), font, fs_title,
-                    CLR_YELLOW, 1, cv2.LINE_AA)
+                    (px1 + PAD_L, py1 + TITLE_H - 14),
+                    font, FS_TITLE, CLR_YELLOW, 2, cv2.LINE_AA)
 
-        # Helper to draw one action row
-        def _row(cursor_y, badge_label, badge_color, description, desc_color=CLR_WHITE):
-            rx = self._key_badge(display,
-                                 px1 + pad_x, cursor_y,
-                                 badge_label, badge_color)
-            cv2.putText(display, description,
-                        (rx, cursor_y), font, fs_row,
-                        desc_color, 1, cv2.LINE_AA)
-            return cursor_y + lh
+        # Rows
+        ry = py1 + TITLE_H + LH - 6    # first baseline
 
-        # Helper for a thin divider
-        def _divider(cursor_y, gap=6):
-            mid = cursor_y + gap // 2
-            cv2.line(display,
-                     (px1 + pad_x, mid), (px2 - pad_x, mid),
-                     (120, 120, 120), 1)
-            return cursor_y + gap
+        for row in rows_data:
+            if row is None:             # divider
+                div_y = ry - LH//2 + DIV_H//2
+                cv2.line(display,
+                         (px1 + PAD_L, div_y),
+                         (px2 - PAD_L, div_y),
+                         (100, 100, 100), 1)
+                ry += DIV_H
+                continue
 
-        # ── row content ──
-        # Badges: draw group = cyan; edit group = orange; exit = green
-        CYAN   = (200, 180,  20)   # BGR ≈ goldenrod (looks cyan on dark bg)
-        ORANGE = (0,  140, 255)
-        GREEN  = (40, 160,  40)
-        RED_B  = (40,  40, 200)
-
-        ry = py1 + title_h + 6    # start just below title
-
-        ry = _row(ry, "Left-Click", CYAN,   "Add a vertex to current polygon")
-        ry = _row(ry, "Enter/Space", CYAN,  "Finish zone  ->  start new one")
-
-        ry = _divider(ry)
-
-        ry = _row(ry, "Z / Ctrl+Z", ORANGE, "Undo last vertex or whole zone")
-        ry = _row(ry, "Y / Ctrl+Y", ORANGE, "Redo last undone zone")
-        ry = _row(ry, "D / Ctrl+D", RED_B,  "Delete zone nearest to cursor")
-        ry = _row(ry, "R",          ORANGE, "Reset in-progress polygon")
-
-        ry = _divider(ry)
-
-        _row(ry, "F  /  Esc",  GREEN,  "Done  ->  start detection", (80, 220, 80))
+            badge_lbl, badge_clr, desc_txt, desc_clr = row
+            # draw badge, get x after it
+            after_badge = self._key_badge(
+                display, px1 + PAD_L, ry, badge_lbl, badge_clr)
+            # description text
+            cv2.putText(display, desc_txt,
+                        (after_badge, ry),
+                        font, FS_DESC, desc_clr, TH_DESC, cv2.LINE_AA)
+            ry += LH
 
         # ════════════════════════════════════════
         # 4. Live status card — top-right
         # ════════════════════════════════════════
+        FS_STAT  = 0.72
+        TH_STAT  = 2
+        SLH      = 38          # status line height
+        S_TITL_H = 44
+
         status_lines = [
-            (f"Zones saved   : {len(self.zones)}",        CLR_CYAN),
-            (f"Current pts   : {len(self.current)}",
-             CLR_YELLOW if len(self.current) > 0 else (160,160,160)),
-            (f"Redo available: {len(self._redo_stack)}",
-             CLR_GREEN if self._redo_stack else (160,160,160)),
+            (f"Zones saved    :  {len(self.zones)}",
+             (80, 255, 200)),
+            (f"In-progress pts:  {len(self.current)}",
+             CLR_YELLOW if self.current else (140, 140, 140)),
+            (f"Redo available :  {len(self._redo_stack)}",
+             CLR_GREEN if self._redo_stack else (140, 140, 140)),
         ]
-        sw   = 230
-        sh   = len(status_lines) * lh + 16
-        sx1  = w - sw - 10
-        sy1  = 10
-        sx2  = w - 10
-        sy2  = sy1 + sh
+
+        # measure status panel width
+        sw = max(desc_w(t) for t, _ in status_lines) + PAD_L * 2
+        sw = max(sw, 560)
+        sh = S_TITL_H + len(status_lines) * SLH + 12
+
+        sx1 = w - sw - 14
+        sy1 = 14
+        sx2 = w - 14
+        sy2 = sy1 + sh
+
         self._filled_rect(display, sx1, sy1, sx2, sy2,
-                          color=(15, 15, 15), alpha=0.78)
+                          color=(10, 10, 10), alpha=0.88)
         self._outline_rect(display, sx1, sy1, sx2, sy2,
-                           color=(200, 200, 200), thickness=1)
-        cv2.putText(display, "STATUS", (sx1 + 8, sy1 + 16),
-                    font, 0.48, CLR_YELLOW, 1, cv2.LINE_AA)
+                           color=(220, 220, 220), thickness=2)
+
+        # Status title bar
+        cv2.rectangle(display, (sx1, sy1), (sx2, sy1 + S_TITL_H),
+                      (35, 35, 35), -1)
+        cv2.rectangle(display, (sx1, sy1), (sx2, sy1 + S_TITL_H),
+                      (220, 220, 220), 2)
+        cv2.putText(display, "STATUS",
+                    (sx1 + PAD_L, sy1 + S_TITL_H - 12),
+                    font, FS_TITLE, CLR_YELLOW, 2, cv2.LINE_AA)
+
         for k, (txt, clr) in enumerate(status_lines):
-            cv2.putText(display, txt, (sx1 + 8, sy1 + 16 + (k+1)*lh),
-                        font, 0.44, clr, 1, cv2.LINE_AA)
+            cv2.putText(display, txt,
+                        (sx1 + PAD_L, sy1 + S_TITL_H + (k + 1) * SLH),
+                        font, FS_STAT, clr, TH_STAT, cv2.LINE_AA)
 
         # ════════════════════════════════════════
-        # 5. Zone colour legend — bottom-left
+        # 5. Zone legend — bottom-left
         # ════════════════════════════════════════
         if self.zones:
-            leg_x, leg_y = 10, h - 14 - len(self.zones)*20 - 10
-            lw = 200
-            lh2 = len(self.zones) * 20 + 14
-            self._filled_rect(display, leg_x, leg_y, leg_x+lw, leg_y+lh2,
-                              color=(15,15,15), alpha=0.78)
-            self._outline_rect(display, leg_x, leg_y, leg_x+lw, leg_y+lh2,
-                               color=(200,200,200), thickness=1)
-            cv2.putText(display, "Zone legend", (leg_x+8, leg_y+12),
-                        font, 0.42, (200,200,200), 1, cv2.LINE_AA)
+            FS_LEG  = 0.68
+            TH_LEG  = 2
+            LEG_LH  = 36
+            LEG_TH  = 40
+            swatch  = 20       # colour swatch square size
+
+            lw = 300
+            lh2 = LEG_TH + len(self.zones) * LEG_LH + 10
+            lx1 = 14
+            ly1 = h - lh2 - 14
+            lx2, ly2 = lx1 + lw, ly1 + lh2
+
+            self._filled_rect(display, lx1, ly1, lx2, ly2,
+                              color=(10, 10, 10), alpha=0.88)
+            self._outline_rect(display, lx1, ly1, lx2, ly2,
+                               color=(220, 220, 220), thickness=2)
+            cv2.putText(display, "Zone legend",
+                        (lx1 + PAD_L, ly1 + 28),
+                        font, 0.70, (200, 200, 200), 2, cv2.LINE_AA)
+
             for zi, zone in enumerate(self.zones):
                 zclr = self._zone_color(zi)
-                zy = leg_y + 12 + (zi+1)*20
-                cv2.rectangle(display, (leg_x+8, zy-10), (leg_x+22, zy+2), zclr, -1)
-                cv2.putText(display, f"Zone {zi}  ({len(zone)} pts)",
-                            (leg_x+28, zy), font, 0.42, zclr, 1, cv2.LINE_AA)
+                zy   = ly1 + LEG_TH + (zi + 1) * LEG_LH - 4
+                # colour swatch
+                cv2.rectangle(display,
+                              (lx1 + PAD_L, zy - swatch + 4),
+                              (lx1 + PAD_L + swatch, zy + 4),
+                              zclr, -1)
+                cv2.rectangle(display,
+                              (lx1 + PAD_L, zy - swatch + 4),
+                              (lx1 + PAD_L + swatch, zy + 4),
+                              CLR_WHITE, 1)
+                cv2.putText(display,
+                            f"Zone {zi}   ({len(zone)} vertices)",
+                            (lx1 + PAD_L + swatch + 8, zy),
+                            font, FS_LEG, zclr, TH_LEG, cv2.LINE_AA)
 
         # ════════════════════════════════════════
-        # 6. Centre-bottom hint when no zones yet
+        # 6. First-click hint — centre bottom
         # ════════════════════════════════════════
         if len(self.zones) == 0 and len(self.current) == 0:
-            hint = "Click on the frame to start drawing your first no-parking zone"
-            (hw, _), _ = cv2.getTextSize(hint, font, 0.52, 1)
-            hx = max(10, w//2 - hw//2)
-            hy = h - 18
-            cv2.putText(display, hint, (hx+1, hy+1), font, 0.52, CLR_BLACK, 2, cv2.LINE_AA)
-            cv2.putText(display, hint, (hx,   hy),   font, 0.52, CLR_YELLOW,1, cv2.LINE_AA)
+            hint = "Click anywhere on the frame to place the first vertex"
+            (hw, hh), _ = cv2.getTextSize(hint, font, 0.80, 2)
+            hx = max(10, w // 2 - hw // 2)
+            hy = h - 24
+            # shadow
+            cv2.putText(display, hint, (hx + 2, hy + 2),
+                        font, 0.80, CLR_BLACK, 3, cv2.LINE_AA)
+            cv2.putText(display, hint, (hx, hy),
+                        font, 0.80, CLR_YELLOW, 2, cv2.LINE_AA)
 
         return display
 
@@ -680,16 +716,16 @@ class ParkingSpotManager:
         self.spots: List[ParkingSpot] = []
         # Place the grid in the BOTTOM portion of the frame
         margin = 10
-        grid_h = frame_h // 5
-        grid_y1 = frame_h - grid_h - margin
+        grid_x1 = margin
+        grid_y1 = margin
+        grid_x2 = frame_w - margin
         grid_y2 = frame_h - margin
-        cell_w = (frame_w - 2*margin) // cols
+        cell_w = (grid_x2 - grid_x1) // cols
         cell_h = (grid_y2 - grid_y1) // rows
-
         sid = 0
         for r in range(rows):
             for c in range(cols):
-                x1 = margin + c * cell_w
+                x1 = grid_x1 + c * cell_w
                 y1 = grid_y1 + r * cell_h
                 x2 = x1 + cell_w - 4
                 y2 = y1 + cell_h - 4
@@ -752,7 +788,7 @@ class AlertManager:
             track.color = CLR_RED
             self.alert_count += 1
             msg = (
-                f"🚨 ILLEGAL PARKING ALERT  |  "
+                f"  ILLEGAL PARKING ALERT  |  "
                 f"Vehicle ID={track.track_id}  |  "
                 f"Dwell={track.dwell_seconds/60:.1f} min  |  "
                 f"Threshold={self.threshold_sec/60:.1f} min  |  "
@@ -836,8 +872,8 @@ def draw_hud(frame: np.ndarray,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, clr, 1, cv2.LINE_AA)
 
     # ── Info panel ──
-    panel_x, panel_y = 10, 10
-    panel_w, panel_h = 270, 145
+    panel_x, panel_y = 7, 7
+    panel_w, panel_h = 500, 260
     sub = frame[panel_y:panel_y+panel_h, panel_x:panel_x+panel_w]
     black = np.zeros_like(sub); cv2.addWeighted(black, 0.55, sub, 0.45, 0, sub)
     frame[panel_y:panel_y+panel_h, panel_x:panel_x+panel_w] = sub
@@ -851,8 +887,8 @@ def draw_hud(frame: np.ndarray,
         (f"Parking: {spot_mgr.available}/{spot_mgr.total} free", CLR_GREEN),
     ]
     for i, (txt, clr) in enumerate(lines):
-        cv2.putText(frame, txt, (panel_x+8, panel_y+18+i*21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, clr, 1, cv2.LINE_AA)
+        cv2.putText(frame, txt, (panel_x+8, panel_y+30+i*40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, clr, 2, cv2.LINE_AA)
 
     # ── Threshold reminder ──
     cv2.putText(frame, f"Alert threshold: {ILLEGAL_DWELL_MINUTES:.1f} min",
@@ -1006,7 +1042,7 @@ class IllegalParkingDetector:
 
         # Summary
         log.info("=" * 60)
-        log.info(f"SUMMARY  |  Frames processed: {frame_no}")
+        log.info(f"OUTPUT   |  Frames processed: {frame_no}")
         log.info(f"         |  Zones monitored : {len(zone_polys)}")
         log.info(f"         |  Total alerts    : {self.alert_mgr.alert_count}")
         log.info(f"         |  Output          : {self.output_path or 'Not saved'}")
