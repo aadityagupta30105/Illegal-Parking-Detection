@@ -1,77 +1,81 @@
 # Real-Time Illegal Parking Detection System
----
+
 
 ## 1. System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    INPUT LAYER                                  │
-│   .mov / .mp4 video file  ──►  OpenCV VideoCapture              │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ first frame
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│           STEP 1 — MULTI-ZONE ANNOTATION (one-time)             │
-│   MultiZoneAnnotator (OpenCV GUI)                               │
-│   • Displays first frame with interactive controls panel        │
-│   • User draws multiple polygon no-parking zones                │
-│   • Full undo / redo / delete support                           │
-│   • Each zone stored as np.ndarray of (x,y) points              │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ List[np.ndarray]
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               STEP 2 — VEHICLE DETECTION (per frame)            │
-│   VehicleDetector (classical DIP pipeline)                      │
-│   1. Grayscale + Gaussian blur                                  │
-│   2. MOG2 Background Subtraction  → foreground mask             │
-│   3. Shadow removal (thresholding MOG2 shadow value 127)        │
-│   4. Morphological open / close / dilate  → clean blobs         │
-│   5. Contour extraction + area / aspect-ratio filter            │
-│   → List[BBox]                                                  │
-│                                                                 │
-│   ── Optional upgrade ──                                        │
-│   YOLOVehicleDetector (yolo_detector.py)                        │
-│   Replaces step above with YOLOv8n inference                    │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ detections: List[BBox]
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               STEP 2 — VEHICLE TRACKING                         │
-│   SortLiteTracker (IoU + Hungarian assignment)                  │
-│   • Associates each detection with closest existing track       │
-│   • Assigns persistent integer IDs                              │
-│   • Removes tracks missing for > MAX_MISSED_FRAMES frames       │
-│   → List[Track]                                                 │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ tracks: List[Track]
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               STEP 3 — ZONE CHECK & DWELL TIMING                │
-│   For each active track:                                        │
-│   • is_in_any_zone(zone_polys, bbox)  — point-in-polygon test   │
-│   • If inside any zone: record entry time, accumulate dwell     │
-│   • If outside all zones: reset timer                           │
-│   AlertManager.check(track)                                     │
-│   • dwell_seconds ≥ threshold → fire ALERT (log + visual)       │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               PARKING SPOT OCCUPANCY                            │
-│   ParkingSpotManager                                            │
-│   • Grid of spots defined outside ALL no-parking zones          │
-│   • IoU check between each spot and each active track           │
-│   • Shows AVAILABLE / OCCUPIED counts on HUD                    │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               HUD RENDERER + OUTPUT                             │
-│   draw_hud(): per-zone coloured overlays, bounding boxes,       │
-│   dwell progress bars, alert flashes, info panel, spot grid     │
-│   Optional: cv2.VideoWriter → annotated .mp4 output             │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        INPUT LAYER                               │
+│   .mov / .mp4 video file  ──►  OpenCV VideoCapture               │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │ first frame
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          STEP 1 — MULTI-ZONE ANNOTATION  (one-time)              │
+│                                                                  │
+│   MultiZoneAnnotator  (interactive OpenCV GUI)                   │
+│   • First frame displayed full-screen with controls panel        │
+│   • User draws any number of no-parking zone polygons            │
+│   • Full undo / redo / delete / reset support                    │
+│   • Each zone stored as np.ndarray of (x, y) vertices            │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │ List[np.ndarray]  (zone polygons)
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          STEP 2 — VEHICLE DETECTION  (every frame)               │
+│                                                                  │
+│   VehicleDetector  (classical DIP pipeline)                      │
+│     1.  Grayscale  +  Gaussian blur  (7×7)                       │
+│     2.  MOG2 background subtraction  →  foreground mask          │
+│     3.  Shadow removal  (threshold at 200 on MOG2 output)        │
+│     4.  Morphological open → close → dilate  (clean blobs)       │
+│     5.  findContours  +  area / aspect-ratio filter              │
+│   →  List[BBox]                                                  │
+│                                                                  │
+│  Optional upgrade: swap in YOLOVehicleDetector (yolo_detector.py)│
+└───────────────────────────────┬──────────────────────────────────┘
+                                │ detections: List[BBox]
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          STEP 2 — VEHICLE TRACKING  (every frame)                │
+│                                                                  │
+│   SortLiteTracker  (IoU-based, Hungarian assignment)             │
+│   • Builds cost matrix:  cost[i,j] = 1 − IoU(track_i, det_j)     │
+│   • Solves with scipy.optimize.linear_sum_assignment             │
+│   • Assigns stable integer IDs across frames                     │
+│   • Prunes tracks missing for > MAX_MISSED_FRAMES frames         │
+│   →  List[Track]  (each with persistent ID and bbox)             │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │ tracks: List[Track]
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          STEP 3 — ZONE CHECK  +  DWELL TIMING                    │
+│                                                                  │
+│   For every active track:                                        │
+│     is_in_any_zone(zone_polys, bbox)  →  cv2.pointPolygonTest    │
+│     Inside  →  record wall-clock entry time, accumulate dwell    │
+│     Outside →  reset timer                                       │
+│                                                                  │
+│   AlertManager.check(track)                                      │
+│     dwell_seconds ≥ threshold  →  fire ALERT                     │
+│       • WARNING written to console + parking_alerts.log          │
+│       • Red border + "ALERT!" label on-screen                    │
+│       • Dwell progress bar fills green → orange → red            │
+└───────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          HUD RENDERER  +  OUTPUT                                 │
+│                                                                  │
+│   draw_hud():                                                    │
+│     • Semi-transparent zone overlays (one colour per zone)       │
+│     • Per-vehicle bounding box  +  ID label  +  dwell bar        │
+│     • "ALERT!" flash on violating vehicles                       │
+│     • Info panel: frame, FPS, zones, active vehicles,            │
+│                   in-zone count, alerts fired, threshold         │
+│                                                                  │
+│   Optional: cv2.VideoWriter  →  annotated .mp4 saved to disk     │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -80,35 +84,37 @@
 
 ```
 for each frame F:
-  ┌─ VehicleDetector.detect(F) ─────────────────────────────────┐
-  │  gray ← grayscale(F)                                        │
-  │  blur ← GaussianBlur(gray, 7×7)                             │
-  │  fg   ← MOG2.apply(blur)          # background model update │
-  │  mask ← threshold(fg, 200)        # remove shadows (127→0)  │
-  │  mask ← morphOpen * morphClose * dilate                     │
-  │  cnts ← findContours(mask)                                  │
-  │  dets ← [BBox(cnt) for cnt in cnts if area>MIN and AR ok]   │
-  └─────────────────────────────────────────────────────────────┘
-         ↓ dets
-  ┌─ SortLiteTracker.update(dets) ──────────────────────────────┐
-  │  cost[i,j] = 1 − IoU(track_i, det_j)                        │
-  │  matched ← Hungarian(cost) where cost < (1 − IOU_THRESH)    │
-  │  update matched; increment missed for unmatched             │
-  │  create new tracks for unmatched detections                 │
-  │  prune tracks with missed > MAX_MISSED_FRAMES               │
-  └─────────────────────────────────────────────────────────────┘
-         ↓ tracks
-  for t in tracks:
-    if centroid(t.bbox) inside ANY zone_poly:
-      t.enter_zone()           # record time.time() on first entry
-      if t.dwell_sec ≥ threshold:
-        FIRE ALERT (log + red flash + "ALERT!" label)
-    else:
-      t.leave_zone()           # reset timer
 
-  ParkingSpotManager.update(tracks)
-  draw_hud(frame, ...)
-  display / write frame
+  ┌─ VehicleDetector.detect(F) ──────────────────────────────────┐
+  │  gray  ←  grayscale(F)                                       │
+  │  blur  ←  GaussianBlur(gray, 7×7)                            │
+  │  fg    ←  MOG2.apply(blur)         # updates background model│
+  │  mask  ←  threshold(fg, 200)       # removes shadow value 127│
+  │  mask  ←  morphOpen  * morphClose * dilate                   │
+  │  cnts  ←  findContours(mask)                                 │
+  │  dets  ←  [BBox(c) for c in cnts if area > MIN and AR ok]    │
+  └──────────────────────────────────────────────────────────────┘
+         ↓ dets: List[BBox]
+
+  ┌─ SortLiteTracker.update(dets) ───────────────────────────────┐
+  │  cost[i,j]  =  1 − IoU(track_i, det_j)                       │
+  │  (r, c)     ←  Hungarian(cost)  if cost < (1 − IOU_THRESH)   │
+  │  matched tracks  →  update bbox, reset missed counter        │
+  │  unmatched tracks →  increment missed counter                │
+  │  unmatched dets   →  create new Track with fresh ID          │
+  │  prune  tracks where missed > MAX_MISSED_FRAMES              │
+  └──────────────────────────────────────────────────────────────┘
+         ↓ tracks: List[Track]
+
+  for t in tracks where t.missed == 0:
+      if centroid(t.bbox) inside ANY zone_poly:
+          t.enter_zone()          # records time.time() on first entry
+          AlertManager.check(t)   # fires if dwell ≥ threshold
+      else:
+          t.leave_zone()          # resets timer + alert flag
+
+  draw_hud(frame, tracks, alert_mgr, zone_polys, frame_no, fps)
+  display frame  /  write to output video
 ```
 
 ---
@@ -118,206 +124,280 @@ for each frame F:
 | Component | Library / Model | Purpose |
 |-----------|----------------|---------|
 | Video I/O | `opencv-python` | Frame capture, display, write |
-| Background subtraction | `cv2.createBackgroundSubtractorMOG2` | Foreground mask |
-| Morphological ops | OpenCV | Mask cleanup |
-| Contour analysis | OpenCV | Blob → bounding box |
-| Hungarian assignment | `scipy.optimize.linear_sum_assignment` | Optimal track↔detection matching |
-| Tracking | Custom `SortLiteTracker` | Persistent vehicle IDs |
-| Zone test | `cv2.pointPolygonTest` | In/out zone check (per polygon) |
-| Annotation GUI | Custom `MultiZoneAnnotator` (OpenCV) | Multi-zone interactive drawing |
-| *(optional)* YOLO | `ultralytics YOLOv8n` | Higher-accuracy detection |
+| Background subtraction | `cv2.createBackgroundSubtractorMOG2` | Foreground mask generation |
+| Morphological ops | OpenCV | Mask denoising and gap-filling |
+| Contour analysis | OpenCV | Blob extraction → bounding box |
+| Hungarian assignment | `scipy.optimize.linear_sum_assignment` | Optimal track ↔ detection matching |
+| Tracking | Custom `SortLiteTracker` | Persistent per-vehicle IDs |
+| Zone membership | `cv2.pointPolygonTest` | In / out check per zone polygon |
+| Annotation GUI | Custom `MultiZoneAnnotator` | Interactive multi-zone drawing |
+| *(optional)* YOLO | `ultralytics YOLOv8n` | Higher-accuracy vehicle detection |
 
 ---
 
 ## 4. Annotation Screen — Full Guide
 
-When you run the script, the **first video frame** opens in a fullscreen annotation window. This is where you define all your no-parking zones before detection begins.
+When the script starts, the first video frame opens in a full-screen annotation window. You draw all no-parking zones here before detection begins.
 
-### What you see
+### Layout
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  ┌──────────────────────────────┐          ┌───────────┐ │
-│  │ NO-PARKING ZONE ANNOTATOR    │          │  STATUS   │ │
-│  ├──────────────────────────────┤          │ Zones : 1 │ │
-│  │ [Left-Click]  Add vertex     │          │ Pts   : 3 │ │
-│  │ [Enter/Space] Finish zone    │          │ Redo  : 0 │ │
-│  ├ · · · · · · · · · · · · · · ·┤          └───────────┘ │
-│  │ [Z/Ctrl+Z]    Undo           │                        │
-│  │ [Y/Ctrl+Y]    Redo           │                        │
-│  │ [D/Ctrl+D]    Delete zone    │   [video frame with    │
-│  │ [R]           Reset current  │    polygon overlays]   │
-│  ├ · · · · · · · · · · · · · · ·┤                        │
-│  │ [F / Esc]     Done           │                        │
-│  └──────────────────────────────┘                        │
-│                                                          │
-│  ┌─────────────────┐   ← zone legend (bottom-left)       │
-│  │ ■ Zone 0  (4pts)│                                     │
-│  │ ■ Zone 1  (6pts)│                                     │
-│  └─────────────────┘                                     │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  ┌────────────────────────────────────────┐      ┌───────────────┐  │
+│  │  NO-PARKING ZONE ANNOTATOR             │      │    STATUS     │  │
+│  ├────────────────────────────────────────┤      │ Zones    : 2  │  │
+│  │  [Left-Click]   Add vertex             │      │ In-prog  : 0  │  │
+│  │  [Enter/Space]  Finish zone            │      │ Redo     : 0  │  │
+│  ├ ·  ·  · ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·┤      └───────────────┘  │
+│  │  [Z / Ctrl+Z]   Undo                   │                         │
+│  │  [Y / Ctrl+Y]   Redo                   │   [ video frame with    │
+│  │  [D / Ctrl+D]   Delete nearest zone    │     polygon overlays ]  │
+│  │  [R]            Reset in-progress      │                         │
+│  ├ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  · ·  ·┤                         │
+│  │  [F / Esc]      Done → begin detection │                         │
+│  └────────────────────────────────────────┘                         │
+│                                                                     │
+│  ┌──────────────────────┐  ← Zone legend (bottom-left)              │
+│  │  ■  Zone 0  (4 pts)  │                                           │
+│  │  ■  Zone 1  (6 pts)  │                                           │
+│  └──────────────────────┘                                           │
+│                                                                     │
+│  Click anywhere on the frame to place the first vertex   ← hint     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Controls reference
 
 | Key | Action |
 |-----|--------|
-| **Left-Click** | Place a vertex in the current polygon being drawn |
-| **Enter** or **Space** | Close the current polygon → save it as a zone, start a new one |
-| **Z** or **Ctrl+Z** | **Undo** — removes the last placed vertex if still drawing, or removes the last completed zone |
-| **Y** or **Ctrl+Y** | **Redo** — restores the most recently undone zone |
-| **D** or **Ctrl+D** | **Delete** — removes the zone whose centroid is closest to the mouse cursor |
-| **R** | **Reset** — discards the polygon currently being drawn (completed zones are unaffected) |
-| **F** or **Esc** | **Done** — auto-closes any open polygon and exits to video detection |
+| **Left-Click** | Place a vertex in the polygon currently being drawn |
+| **Enter** or **Space** | Close and save the current polygon as a zone, then start a new one |
+| **Z** or **Ctrl+Z** | Undo — removes the last vertex if still drawing, or removes the last completed zone |
+| **Y** or **Ctrl+Y** | Redo — restores the last undone zone |
+| **D** or **Ctrl+D** | Delete — removes the zone whose centroid is closest to the mouse cursor |
+| **R** | Reset — discards the in-progress polygon only (completed zones are untouched) |
+| **F** or **Esc** | Done — auto-closes any open polygon and exits to video processing |
 
 ### Step-by-step workflow
 
-1. **Click** to place the first vertex of a no-parking zone on the frame.
-2. Continue clicking to add more vertices. A live rubber-band line shows where the next edge will go.
-3. Once you have ≥ 3 points and the shape looks right, press **Enter** or **Space** to finalise the zone. It fills with a semi-transparent colour and gets a "Zone 0" label.
-4. Immediately start clicking to draw the next zone — each one gets a different colour automatically.
-5. Repeat for as many zones as needed.
-6. If you make a mistake:
-   - Press **Z** to undo the last vertex (while drawing), or to remove the last finished zone.
-   - Press **R** to throw away the current in-progress polygon entirely.
-   - Hover your mouse over an existing zone and press **D** to delete it.
-7. When all zones are defined, press **F** or **Esc** to begin video processing.
+1. Left-click to place the first vertex anywhere on the frame.
+2. Keep clicking to add more vertices. A live rubber-band line follows your cursor from the last point.
+3. When your polygon covers the no-parking zone (≥ 3 points), press **Enter** or **Space**. The zone is saved, filled with a colour, and labelled "Zone 0".
+4. Start clicking immediately to draw a second zone. Each zone gets a distinct colour from an 8-colour palette.
+5. Repeat for as many zones as needed — hospital entrances, bus stops, yellow-box junctions, fire lanes, etc.
+6. Mistakes:
+   - **Z** removes the last vertex while drawing, or the whole last finished zone.
+   - **R** discards the polygon you are currently drawing.
+   - Hover over any zone and press **D** to delete it.
+   - **Y** restores a zone removed by Z or D.
+7. Press **F** or **Esc** when all zones are defined. Detection begins immediately.
 
-### Visual feedback
+### Visual feedback during annotation
 
-- **Colour-coded zones** — each zone has its own colour from an 8-colour palette so overlapping zones are easy to distinguish.
-- **Rubber-band line** — a dashed line follows your cursor from the last placed vertex, showing exactly where the next edge will go.
-- **Vertex dots** — white-rimmed circles at each vertex of completed and in-progress polygons.
-- **Hover-to-delete** — hovering the mouse over a completed zone highlights it brighter and shows a `[D] delete` hint at its label.
-- **Status card** (top-right) — live counts of saved zones, current in-progress vertices, and available redo steps.
-- **Zone legend** (bottom-left) — lists every saved zone with its colour swatch and vertex count.
+- Each zone has its own **colour** — overlapping zones are always distinguishable.
+- A **rubber-band line** follows the cursor from the last vertex so you can preview the next edge.
+- **White-rimmed dots** mark every vertex of both completed and in-progress polygons.
+- The **hover highlight** brightens a zone when your cursor is over it and shows a `[ D ] delete this zone` hint.
+- The **Status card** (top-right) shows live counts: zones saved, in-progress vertex count, redo depth.
+- The **Zone legend** (bottom-left) lists every saved zone with its colour swatch and vertex count.
+- A **first-click hint** appears at the bottom-centre until you start drawing.
 
 ---
 
 ## 5. How to Run
 
 ### Install dependencies
+
 ```bash
-pip install -r requirements.txt
+pip install opencv-python numpy scipy
 ```
 
-### Basic run (annotation window opens)
+### Basic run — annotation window opens automatically
+
 ```bash
 python parking_detector.py path/to/video.mov
 ```
 
-### Set dwell threshold (minutes)
+### Set a custom dwell threshold
+
 ```bash
+# Alert after 2 minutes (useful for testing)
 python parking_detector.py video.mov --dwell 2
+
+# Production: alert after 10 minutes
+python parking_detector.py video.mov --dwell 10
 ```
 
 ### Save annotated output video
+
 ```bash
 python parking_detector.py video.mov --output result.mp4
 ```
 
-### Headless / server mode (no display window)
+### Headless mode — no display window (e.g. on a server)
+
 ```bash
 python parking_detector.py video.mov --no-display --output result.mp4
 ```
 
-### Pre-define a single zone (skip annotation)
+### Skip the annotation window — provide zones as JSON
+
+Single zone:
 ```bash
 python parking_detector.py video.mov \
-  --zone "[[100,150],[500,150],[500,450],[100,450]]"
+  --zone "[[120,100],[560,100],[560,420],[120,420]]"
 ```
 
-### Pre-define multiple zones (skip annotation)
+Multiple zones:
 ```bash
 python parking_detector.py video.mov \
   --zone "[[[100,100],[400,100],[400,400],[100,400]],[[500,100],[750,100],[750,350],[500,350]]]"
 ```
 
-### Full example
+### Full production example
+
 ```bash
 python parking_detector.py hospital_entrance.mov \
   --dwell 10 \
-  --output detected.mp4
+  --output violations_$(date +%Y%m%d).mp4
 ```
 
-### Tuning global variables
-Edit the top of `parking_detector.py`:
+### Tunable constants — edit the top of `parking_detector.py`
+
 ```python
-ILLEGAL_DWELL_MINUTES: float = 10.0   # alert threshold in minutes
-MIN_DETECTION_AREA:    int   = 1500   # min blob area in pixels²
-IOU_THRESHOLD:         float = 0.25   # tracker sensitivity
-MAX_MISSED_FRAMES:     int   = 30     # frames before a track is pruned
-PARKING_SPOT_GRID_ROWS: int  = 2      # rows of legal parking spots
-PARKING_SPOT_GRID_COLS: int  = 5      # columns of legal parking spots
+ILLEGAL_DWELL_MINUTES: float = 10.0  # minutes before an alert fires
+IOU_THRESHOLD:         float = 0.25  # raise to be stricter about track matching
+MAX_MISSED_FRAMES:     int   = 30    # lower to prune lost tracks faster
+MIN_DETECTION_AREA:    int   = 1500  # raise to ignore smaller blobs (pedestrians)
+BACKGROUND_HISTORY:    int   = 300   # MOG2 frames to build background model
+BG_THRESHOLD:          float = 40.0  # MOG2 sensitivity (lower = more sensitive)
 ```
 
 ### Controls during video playback
+
 | Key | Action |
 |-----|--------|
-| `q` or `Esc` | Stop processing |
+| **Q** or **Esc** | Stop processing and exit |
 
 ---
 
 ## 6. Output
 
-- **Console + `parking_alerts.log`** — timestamped alert entries:
-  ```
-  2024-01-15 14:32:11  [WARNING]  🚨 ILLEGAL PARKING ALERT  |  Vehicle ID=3  |  Dwell=10.2 min  |  Threshold=10.0 min  |  BBox=(220,140,380,290)
-  ```
-- **Annotated video** (if `--output` given) — MP4 with all overlays baked in.
-- **Real-time window** — live feed with zone overlays, bounding boxes, dwell bars, and parking grid.
+### Console + log file
+
+Every alert is written to both stdout and `parking_alerts.log` in the working directory:
+
+```
+2024-01-15 14:32:11  [WARNING]  ILLEGAL PARKING ALERT | Vehicle ID=3 | Dwell=10.2 min | BBox=(220,140,380,290)
+```
+
+The log file is overwritten on each new run. To append instead, change `mode="w"` to `mode="a"` in the `logging.FileHandler` call at the top of `parking_detector.py`.
+
+### Annotated video
+
+If `--output` is provided, the processed video is saved as an `.mp4` with all overlays baked in — zone fills, bounding boxes, dwell bars, alert flashes, and the info panel.
+
+### Real-time window
+
+The live window shows:
+
+- **Zone overlays** — each no-parking zone filled with its colour (18 % opacity) and outlined with a 2 px border. The zone label sits at the polygon centroid.
+- **Vehicle bounding boxes** — coloured per unique track ID.
+- **Dwell progress bar** — a thin bar below each vehicle currently inside a zone. Fills left to right as time accumulates: green (< 50 % of threshold) → orange (50–90 %) → red (> 90 %).
+- **ALERT flash** — a thick red border and "ALERT!" label appear on any vehicle that has exceeded the dwell threshold.
+- **Info panel** (top-left, semi-transparent):
+
+```
+Frame           : 1042
+FPS             : 24.8
+Zones           : 2
+Active vehicles : 7
+In no-park zone : 1
+Alerts fired    : 0
+Threshold       : 10.0 min
+```
 
 ---
 
 ## 7. Optional YOLO Upgrade
 
-For higher detection accuracy (especially in complex or crowded scenes), replace the classical DIP detector with YOLOv8:
+The default detector uses MOG2 background subtraction. This works well for stationary cameras but has two known limitations: it needs roughly 300 frames (~12 seconds at 25 fps) to warm up its background model, and it can struggle with stationary vehicles (which blend into the background after a while).
+
+For higher accuracy, swap in YOLOv8:
 
 ```bash
 pip install ultralytics
 ```
 
-Then in `parking_detector.py`, change the import at the top of `IllegalParkingDetector.__init__`:
+Then inside `IllegalParkingDetector.__init__` in `parking_detector.py`, replace:
 
 ```python
-# Replace this line:
 self.detector = VehicleDetector()
+```
 
-# With this:
+with:
+
+```python
 from yolo_detector import YOLOVehicleDetector
 self.detector = YOLOVehicleDetector(model_path="yolov8n.pt", conf=0.35)
 ```
 
-YOLOv8n downloads automatically on first use (~6 MB). The rest of the pipeline is unchanged.
+`yolov8n.pt` (~6 MB) downloads automatically on first use. Everything downstream — tracker, zone check, alert system, HUD — is unchanged.
+
+Detected vehicle classes (COCO IDs): car (2), motorcycle (3), bus (5), truck (7).
 
 ---
 
-## 8. Production Improvements
+## 8. Why Parking Spot Counting Was Removed
 
-**Detection accuracy**
-- Train a custom YOLOv8 model on local CCTV data (Vellore traffic conditions).
-- Add licence-plate OCR with EasyOCR / PaddleOCR to log offending plate numbers.
-- Apply CLAHE illumination normalisation for night and rainy conditions.
-- Add HSV-based shadow suppression for parking lots with strong sunlight.
+An earlier version attempted to count available vs occupied parking bays using Hough line detection and texture analysis (pixel variance + Laplacian edge energy). After real-world testing on drone and overhead CCTV footage, the approach proved unreliable for the following reasons:
 
-**Tracking robustness**
-- Upgrade to DeepSORT or ByteTrack for re-identification across occlusions.
-- Add a Kalman filter for smoother trajectory prediction and better tracking at low frame rates.
+- **Car roof colour varies widely** — white, silver, dark, red. No single brightness or texture threshold separates all car roofs from empty asphalt across different vehicles.
+- **Lighting changes** — sun angle, cloud shadow, and time of day shift both asphalt and car-roof pixel values by ±30 grayscale units across a single recording, breaking any fixed threshold.
+- **Drone altitude** — at typical survey heights each bay is only 60–100 px wide. A 3 px painted white line dominates the texture signal for both occupied and empty bays at this scale.
+- **Hough line instability** — parking bay lines are short, parallel, and densely packed, producing hundreds of spurious short segments that cluster incorrectly and yield wrong bay boundaries.
 
-**Alerts & logging**
-- Push email / SMS alerts via SMTP / Twilio when a violation is confirmed.
-- Save a frame snapshot at the moment of each alert.
-- Write violations to a PostgreSQL database (vehicle ID, zone, timestamp, snapshot path).
-- Expose a FastAPI REST endpoint for integration with a traffic management dashboard.
+The system now focuses exclusively on what classical DIP can do reliably: detecting vehicle movement and tracking dwell time within user-defined restricted zones.
 
-**Scalability**
-- Accept RTSP streams as input for live CCTV feeds.
-- Multi-thread frame capture + processing using a queue for higher throughput.
-- GPU inference via TensorRT-optimised YOLOv8 for real-time processing at 1080p.
-- Docker containerisation for deployment on edge devices (Jetson Nano / Raspberry Pi).
-- Multi-camera support with shared zone configuration.
+### Reliable alternatives for bay counting
 
-**Evaluation**
-- Benchmark against the PKLot dataset for detection accuracy (Precision / Recall / F1).
-- Compare classical DIP vs YOLO under rain, night, and glare conditions.
-- Measure false-positive rate per zone type (hospital entrance vs market area).
+If per-bay occupancy counting is a requirement for your project, the following approaches work correctly:
+
+| Approach | Difficulty | Accuracy |
+|----------|-----------|---------|
+| Manual bay annotation + background subtraction against a known-empty reference frame | Medium | High |
+| YOLOv8 vehicle detection + per-bay IoU overlap check | Medium | High |
+| Fine-tuned CNN classifier (PKLot dataset) on pre-segmented bay ROIs | High | Very high |
+| Commercial vision API (Google Vision, Azure Computer Vision) | Low | High |
+
+---
+
+## 9. Production Improvements
+
+### Detection accuracy
+- Train a custom YOLOv8 model on local CCTV footage covering Vellore traffic conditions and Indian vehicle types.
+- Add licence-plate OCR (EasyOCR / PaddleOCR) to log the plate number of each violating vehicle alongside the alert.
+- Apply CLAHE illumination normalisation for night-time and rainy conditions.
+- Add HSV-based shadow masking to reduce false positives caused by cast shadows on the road surface.
+
+### Tracking robustness
+- Upgrade `SortLiteTracker` to **DeepSORT** or **ByteTrack** for re-identification across occlusions and temporary camera blind spots.
+- Add a **Kalman filter** for smoother trajectory prediction between detection frames, reducing ID switches.
+
+### Alerts and logging
+- Send email / SMS notifications via SMTP / Twilio the moment a violation threshold is crossed.
+- Capture and archive a frame snapshot for each violation as photographic evidence for enforcement.
+- Write all violations to a **PostgreSQL** database (vehicle ID, zone index, entry time, dwell duration, snapshot path).
+- Expose a **FastAPI** REST endpoint so a live traffic management dashboard can poll status and receive alerts.
+
+### Scalability
+- Accept **RTSP stream URLs** as input for live CCTV feeds — replace the file path argument with the stream URL.
+- Use a **multi-threaded** capture + processing queue (`queue.Queue`) to decouple frame IO from inference latency.
+- Run GPU inference via **TensorRT-optimised YOLOv8** for real-time throughput at full 1080p resolution.
+- Containerise with **Docker** for reproducible deployment on edge devices (Jetson Nano, Raspberry Pi 5).
+- Support **multiple simultaneous cameras** sharing a single zone configuration file loaded at startup.
+
+### Evaluation
+- Benchmark detection accuracy against the **PKLot** dataset (Precision / Recall / F1 per camera viewpoint).
+- Compare MOG2 vs YOLOv8 alert accuracy under rain, night, headlight glare, and heavy vehicle occlusion.
+- Measure false-positive and false-negative alert rates per zone type (hospital entrance, market area, bus stop, fire lane).
