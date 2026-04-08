@@ -1,2 +1,15 @@
 #ignore dataset
-*.MOV
+*.mp4
+
+#yolomodels
+
+*.pt
+
+#ignore positions
+
+CarParkPos
+parking.log
+
+#ignore pycache
+
+pycache/
