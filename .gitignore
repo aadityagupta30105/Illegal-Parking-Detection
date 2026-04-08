@@ -1,15 +1,17 @@
-#ignore dataset
+# Ignore datasets and videos
+Datasets/
 *.mp4
+*.mov
 
-#yolomodels
-
+# Ignore YOLO models
 *.pt
 
-#ignore positions
-
+# Ignore parking position file
 CarParkPos
-parking.log
 
-#ignore pycache
+# Ignore logs
+*.log
 
-pycache/
+# Ignore Python cache
+__pycache__/
+*.pyc
