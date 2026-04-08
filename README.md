@@ -8,17 +8,21 @@ Real-time parking enforcement using OpenCV, MOG2/YOLOv8, and a Kalman-SORT track
 
 ```bash
 pip install -r requirements.txt
-
-# 1. Mark slot positions on first video frame
+```
+1. Mark slot positions on first video frame
+```bash
 python main.py picker clip.mp4
-
-# 2. (Optional) test slot occupancy only
+```
+2. (Optional) test slot occupancy only
+```bash
 python main.py occupancy clip.mp4
-
-# 3. Full detection pipeline (opens zone-annotation window first)
+```
+3. Full detection pipeline (opens zone-annotation window first)
+```bash
 python main.py detect clip.mp4
-
-# 4. GUI (no CLI needed)
+```
+4. GUI (no CLI needed)
+```bash
 python gui.py
 ```
 

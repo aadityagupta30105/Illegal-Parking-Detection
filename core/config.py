@@ -20,8 +20,8 @@ BACKGROUND_HISTORY: int   = 300
 BG_THRESHOLD:       float = 40.0
 
 # ── Slot Picker / Slot Dimensions ────────────────────────────────────────────
-SLOT_W: int = 60
-SLOT_H: int = 120
+SLOT_W: int = 15
+SLOT_H: int = 30
 
 # Picker canvas resolution
 PICKER_W: int = 1280
