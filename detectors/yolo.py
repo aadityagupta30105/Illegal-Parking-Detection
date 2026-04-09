@@ -1,7 +1,5 @@
 """
-detectors/yolo.py — Optional YOLOv8 vehicle detector.
-
-Install:  pip install ultralytics
+detectors/yolo.py 
 """
 from __future__ import annotations
 
@@ -16,11 +14,6 @@ log = logging.getLogger(__name__)
 
 
 class YOLODetector:
-    """
-    YOLOv8-based detector with the same interface as ClassicalDetector.
-    Raises ImportError at construction time if ultralytics is absent.
-    """
-
     def __init__(self, model_path: str = "yolov8n.pt", conf: float = 0.35) -> None:
         try:
             from ultralytics import YOLO
@@ -47,10 +40,6 @@ class YOLODetector:
 
 
 def build_detector(use_yolo: bool, model: str = "yolov8n.pt", conf: float = 0.35):
-    """
-    Factory: returns YOLODetector when requested and available,
-    otherwise falls back to ClassicalDetector with a warning.
-    """
     if use_yolo:
         try:
             det = YOLODetector(model, conf)

@@ -1,5 +1,5 @@
 """
-core/video_utils.py — Video I/O helpers.
+core/video_utils.py
 """
 from __future__ import annotations
 

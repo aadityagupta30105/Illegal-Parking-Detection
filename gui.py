@@ -1,17 +1,5 @@
 """
-gui.py — Tkinter dashboard for the Unified Parking System.
-
-Run with:  python gui.py
-Requires:  tkinter (standard library) + all project dependencies.
-
-Improvements:
-- Tabbed layout: Files | Detection | Slots | About
-- Mode selector drives visible tab subset
-- Responsive grid layout (resizable)
-- Real-time subprocess log with colour-tagged lines (INFO / WARNING / ERROR)
-- Elapsed timer in status bar
-- Kill button to terminate a running process
-- Tooltip helper for all major controls
+gui.py
 """
 from __future__ import annotations
 
@@ -27,7 +15,6 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# ── Colour scheme ─────────────────────────────────────────────────────────────
 _BG      = "#1e1e2e"
 _PANEL   = "#2a2a3e"
 _PANEL2  = "#313147"
@@ -44,7 +31,6 @@ _FONT_M  = ("Segoe UI", 11, "bold")
 _FONT_C  = ("Consolas",  9)
 
 
-# ── Tooltip ───────────────────────────────────────────────────────────────────
 class _Tooltip:
     def __init__(self, widget: tk.Widget, text: str) -> None:
         self._widget = widget
@@ -72,7 +58,6 @@ class _Tooltip:
             self._tip = None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 def _label(parent, text, bold=False, dim=False, **kw):
     fg   = _FG_DIM if dim else _FG
     font = _FONT_B if bold else _FONT
@@ -92,7 +77,6 @@ def _btn(parent, text, cmd, color=_ACCENT, fg="white", padx=14, pady=6, **kw):
     )
 
 
-# ── Main GUI ──────────────────────────────────────────────────────────────────
 class ParkingGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -101,7 +85,6 @@ class ParkingGUI(tk.Tk):
         self.minsize(720, 580)
         self.configure(bg=_BG)
 
-        # ── State variables ────────────────────────────────────────────────
         self._video_var      = tk.StringVar()
         self._pos_var        = tk.StringVar(value="CarParkPos")
         self._output_var     = tk.StringVar()
@@ -120,7 +103,6 @@ class ParkingGUI(tk.Tk):
 
         self._build_ui()
 
-    # ── UI construction ───────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         # Title bar
@@ -155,7 +137,6 @@ class ParkingGUI(tk.Tk):
         self._build_slots_tab()
         self._build_about_tab()
 
-        # Mode selector (outside notebook, always visible)
         mode_f = tk.Frame(self, bg=_BG)
         mode_f.pack(fill="x", padx=20, pady=2)
         _label(mode_f, "Mode:", bold=True, bg=_BG).pack(side="left", padx=(0, 8))
@@ -209,8 +190,6 @@ class ParkingGUI(tk.Tk):
         self._nb.add(f, text=title)
         return f
 
-    # ── Files tab ─────────────────────────────────────────────────────────
-
     def _build_files_tab(self) -> None:
         f = self._tab_files
         f.columnconfigure(1, weight=1)
@@ -232,7 +211,6 @@ class ParkingGUI(tk.Tk):
             b = _btn(f, "Browse", cmd, padx=10, pady=4)
             b.grid(row=i, column=2, padx=(4, 14), pady=8)
 
-    # ── Detect tab ────────────────────────────────────────────────────────
 
     def _build_detect_tab(self) -> None:
         f = self._tab_detect
@@ -293,8 +271,6 @@ class ParkingGUI(tk.Tk):
             cb2.pack(side="left", padx=12)
             _Tooltip(cb2, tip)
 
-    # ── Slots tab ─────────────────────────────────────────────────────────
-
     def _build_slots_tab(self) -> None:
         f = self._tab_slots
         lines = [
@@ -327,8 +303,6 @@ class ParkingGUI(tk.Tk):
         self._on_mode_change()
         self._nb.select(0)   # switch to Files tab so user can see the path
         self._on_run()
-
-    # ── About tab ─────────────────────────────────────────────────────────
 
     def _build_about_tab(self) -> None:
         f = self._tab_about
@@ -421,7 +395,6 @@ class ParkingGUI(tk.Tk):
             self._timer_id    = None
             self._start_time  = None
 
-    # ── Subprocess runner ──────────────────────────────────────────────────
 
     def _run_subprocess(self) -> None:
         mode  = self._mode_var.get()
@@ -489,7 +462,6 @@ class ParkingGUI(tk.Tk):
         self.after(0, _do)
 
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
 def _set_state_recursive(widget: tk.Widget, state: str) -> None:
     try:
         widget.configure(state=state)
@@ -499,7 +471,6 @@ def _set_state_recursive(widget: tk.Widget, state: str) -> None:
         _set_state_recursive(child, state)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     app = ParkingGUI()

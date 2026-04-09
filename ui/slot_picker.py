@@ -29,7 +29,6 @@ PICKER_IMG    = "clipimage.png"
 DEFAULT_VIDEO = "clip.mp4"
 
 
-# ── Persistence ───────────────────────────────────────────────────────────────
 def _load(path: str) -> List[Tuple[int, int]]:
     try:
         with open(path, "rb") as f:
@@ -43,7 +42,6 @@ def _save(path: str, pos: List[Tuple[int, int]]) -> None:
         pickle.dump(pos, f)
 
 
-# ── Picker image ──────────────────────────────────────────────────────────────
 def _ensure_picker_image(img_path: str, video_path: str, w: int, h: int) -> np.ndarray:
     """Return picker image; auto-extract from video if file is missing."""
     p = Path(img_path)
@@ -70,7 +68,6 @@ def _ensure_picker_image(img_path: str, video_path: str, w: int, h: int) -> np.n
     return frame_resized
 
 
-# ── Mouse callback ────────────────────────────────────────────────────────────
 def _mouse_cb(event, x: int, y: int, flags, pos_list: List[Tuple[int, int]]) -> None:
     if event == cv2.EVENT_LBUTTONDOWN:
         pos_list.append((x, y))
@@ -83,7 +80,6 @@ def _mouse_cb(event, x: int, y: int, flags, pos_list: List[Tuple[int, int]]) -> 
                 break
 
 
-# ── Render ─────────────────────────────────────────────────────────────────────
 def _draw(base: np.ndarray, pos_list: List[Tuple[int, int]]) -> np.ndarray:
     """Overlay slot rectangles and a clearly readable control hint panel."""
     canvas = base.copy()
@@ -108,7 +104,6 @@ def _draw(base: np.ndarray, pos_list: List[Tuple[int, int]]) -> np.ndarray:
     return canvas
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
 def run_picker(
     video_path: str = DEFAULT_VIDEO,
     pos_file:   str = POS_FILE,

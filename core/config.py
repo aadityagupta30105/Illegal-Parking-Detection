@@ -1,5 +1,5 @@
 """
-core/config.py — Single source of truth for all parameters and shared types.
+core/config.py
 """
 from __future__ import annotations
 
@@ -9,25 +9,25 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-# ── Detection / Tracking ─────────────────────────────────────────────────────
+#Detection / Tracking
 ILLEGAL_DWELL_MINUTES: float = 0.5
 IOU_THRESHOLD:         float = 0.25
 MAX_MISSED_FRAMES:     int   = 30
 MIN_DETECTION_AREA:    int   = 1500
 
-# ── MOG2 Background Subtraction ──────────────────────────────────────────────
+#MOG2 Background Subtraction
 BACKGROUND_HISTORY: int   = 300
 BG_THRESHOLD:       float = 40.0
 
-# ── Slot Picker / Slot Dimensions ────────────────────────────────────────────
+#Slot Picker / Slot Dimensions
 SLOT_W: int = 15
 SLOT_H: int = 30
 
-# Picker canvas resolution
+#Picker canvas resolution
 PICKER_W: int = 1280
 PICKER_H: int = 720
 
-# ── Classical Slot-Occupancy Preprocessing ───────────────────────────────────
+#Classical Slot-Occupancy Preprocessing
 BLUR_KSIZE:     Tuple[int, int] = (3, 3)
 BLUR_SIGMA:     int             = 1
 THRESH_BLOCK:   int             = 25
@@ -36,14 +36,14 @@ MEDIAN_KSIZE:   int             = 5
 DILATE_ITER:    int             = 1
 FREE_THRESHOLD: int             = 900
 
-# ── Display ──────────────────────────────────────────────────────────────────
+#Display
 DISPLAY_W: int = 1280
 DISPLAY_H: int = 720
 
-# ── YOLO ─────────────────────────────────────────────────────────────────────
+#YOLO
 VEHICLE_CLASSES = {2, 3, 5, 7}   # COCO: car, motorcycle, bus, truck
 
-# ── Colours (BGR) ────────────────────────────────────────────────────────────
+#Colours (BGR)
 CLR_GREEN  = (50,  205,  50)
 CLR_RED    = (0,     0, 220)
 CLR_YELLOW = (0,   215, 255)
@@ -57,8 +57,7 @@ ZONE_PALETTE: List[Tuple[int, int, int]] = [
     (0,  220, 220), (255, 80,  80), (30,  180, 255), (100, 255, 150),
 ]
 
-
-# ── Shared Data Structures ───────────────────────────────────────────────────
+#Shared Data Structures
 @dataclass
 class BBox:
     x1: int; y1: int; x2: int; y2: int

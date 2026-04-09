@@ -1,13 +1,5 @@
 """
-core/slot_occupancy.py — Parking slot occupancy detection.
-
-Reuses the preprocessed frame produced by the classical detector pipeline
-to avoid duplicate grayscale/threshold operations.
-
-Optimizations:
-- draw_slots pre-clamps all slot ROIs once (avoids per-slot min/max calls).
-- Summary banner drawn with alpha_rect for visual consistency.
-- run_slot_occupancy loops video endlessly with a single rewind.
+core/slot_occupancy.py 
 """
 from __future__ import annotations
 

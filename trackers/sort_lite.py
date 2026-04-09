@@ -1,18 +1,5 @@
 """
 trackers/sort_lite.py
-─────────────────────
-SORT tracker with:
-  • Per-track Kalman Filter for smooth bbox prediction under occlusion
-  • ByteTrack-style two-stage matching (high-conf first, low-conf second)
-  • Vectorised IoU cost matrix (single numpy call)
-  • Mahalanobis distance gate to suppress wild cost-matrix entries
-  • Motion-based zone-entry gating (velocity estimation)
-  • Adaptive IOU threshold based on track age and velocity magnitude
-  • Early track confirmation (min hit streak) to suppress flicker
-  • Track velocity stored on Track for downstream zone logic
-
-State vector : [cx, cy, s, r, cx', cy', s']   (s=area, r=aspect, primes=velocity)
-Measurement  : [cx, cy, s, r]
 """
 from __future__ import annotations
 
@@ -23,7 +10,6 @@ from scipy.optimize import linear_sum_assignment
 
 from core.config import IOU_THRESHOLD, MAX_MISSED_FRAMES, BBox, Track
 
-# ── Kalman constants ──────────────────────────────────────────────────────────
 _DIM_X = 7
 _DIM_Z = 4
 
@@ -31,18 +17,14 @@ _Q_DIAG = np.array([1., 1., 1., 1e-2, 1e-2, 1e-2, 1e-4], dtype=np.float64)
 _R_DIAG = np.array([1., 1., 10., 10.], dtype=np.float64)
 _P0_VEL_SCALE = 10.0
 
-# ByteTrack thresholds
 _HIGH_IOU = 0.35
 _LOW_IOU  = 0.15
 
-# Mahalanobis gate chi-squared threshold (4 DOF, 95 % confidence)
 _MAHA_GATE = 9.4877
 
-# Track must be matched this many consecutive frames before it's exported
 _MIN_HIT_STREAK = 2
 
 
-# ── Vectorised IoU ────────────────────────────────────────────────────────────
 def _iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """
     a : (N, 4)  [x1,y1,x2,y2]
@@ -68,14 +50,12 @@ def _bboxes_to_arr(bboxes: List[BBox]) -> np.ndarray:
     return np.array([[b.x1, b.y1, b.x2, b.y2] for b in bboxes], dtype=np.float32)
 
 
-# ── Kalman filter ─────────────────────────────────────────────────────────────
 class _KalmanBox:
     """
     Constant-velocity KF on [cx, cy, s, r] measurements (s=area, r=aspect).
     Uses float64 internally for numerical stability.
     """
 
-    # Shared transition matrix (never mutated after init)
     _F = np.eye(_DIM_X, dtype=np.float64)
     for _i in range(4):
         _F[_i, _i + 3] = 1.0
@@ -94,7 +74,6 @@ class _KalmanBox:
         # Innovation covariance (updated each predict for Mahalanobis gate)
         self.S: np.ndarray = self._H @ self.P @ self._H.T + self._R
 
-    # ── public ────────────────────────────────────────────────────────────
 
     def predict(self) -> BBox:
         self.x = self._F @ self.x
@@ -125,7 +104,6 @@ class _KalmanBox:
         """Return (vx, vy) in pixel/frame derived from state."""
         return float(self.x[4]), float(self.x[5])
 
-    # ── helpers ───────────────────────────────────────────────────────────
 
     @staticmethod
     def _meas(b: BBox) -> Tuple[float, float, float, float]:
@@ -148,7 +126,6 @@ class _KalmanBox:
         )
 
 
-# ── Internal track wrapper ────────────────────────────────────────────────────
 class _KalmanTrack:
     __slots__ = ("track", "kf", "hit_streak", "age")
 
@@ -194,25 +171,12 @@ class _KalmanTrack:
         return max(0.10, base - speed_penalty + age_bonus)
 
 
-# ── Public tracker ────────────────────────────────────────────────────────────
 class SortLiteTracker:
-    """
-    Drop-in replacement for original SortLiteTracker.
-
-    Key improvements:
-    - Kalman prediction smooths bbox between frames.
-    - Two-stage ByteTrack matching reduces ID switches under occlusion.
-    - Mahalanobis gate rejects physically impossible matches before Hungarian.
-    - Adaptive IoU threshold per track (speed + age aware).
-    - Vectorised IoU — O(1) numpy call.
-    - Velocity exported to Track for zone-entry motion gating.
-    """
 
     def __init__(self) -> None:
         self._next_id: int = 1
         self._tracks: Dict[int, _KalmanTrack] = {}
 
-    # ── public interface ──────────────────────────────────────────────────
 
     def update(self, detections: List[BBox]) -> List[Track]:
         # 1. Predict all existing tracks forward one step
@@ -253,7 +217,6 @@ class SortLiteTracker:
     def tracks(self) -> Dict[int, Track]:
         return {tid: kt.track for tid, kt in self._tracks.items()}
 
-    # ── internals ─────────────────────────────────────────────────────────
 
     def _match_stage(
         self,
@@ -270,8 +233,6 @@ class SortLiteTracker:
         sub_det = det_arr[det_indices]
 
         iou  = _iou_matrix(trk_arr, sub_det)  # (n_tracks, k_dets)
-
-        # ── Mahalanobis gate: zero out impossible matches ─────────────────
         for ri, tid in enumerate(track_ids):
             kt = self._tracks[tid]
             for ci, di in enumerate(det_indices):

@@ -1,16 +1,5 @@
 """
-core/illegal_parking.py — Full illegal-parking detection pipeline.
-
-Optimizations vs original:
-- Single grayscale + preprocess per frame (no duplicate conversions).
-- draw_hud uses draw_panel from _hud_utils (no manual alpha-blend boilerplate).
-- Zone-entry check uses motion gating: a track moving rapidly away from a zone
-  is not considered to have entered it (reduces false positives at zone edges).
-- Zone polygon test accelerated with bounding-box pre-filter before the slower
-  pointPolygonTest.
-- Minimal frame copies: only one copy per zone fill overlay (same as before),
-  but info-panel blending replaced by alpha_rect (ROI-only copy, not full frame).
-- FPS timer uses a ring-buffer average for smoother display.
+core/illegal_parking.py 
 """
 from __future__ import annotations
 
@@ -34,7 +23,6 @@ from ui._hud_utils import alpha_rect, draw_panel, draw_text_box
 log = logging.getLogger(__name__)
 
 
-# ── Alert manager ─────────────────────────────────────────────────────────────
 class AlertManager:
     def __init__(self, dwell_minutes: float = ILLEGAL_DWELL_MINUTES) -> None:
         self.threshold_sec = dwell_minutes * 60.0
@@ -54,7 +42,6 @@ class AlertManager:
             )
 
 
-# ── Zone helpers ──────────────────────────────────────────────────────────────
 def _zone_bounds(polys: List[np.ndarray]) -> List[Tuple[int, int, int, int]]:
     """Pre-compute axis-aligned bounding boxes for each zone polygon."""
     bounds = []
@@ -98,7 +85,6 @@ def _motion_leaving_zone(track: Track) -> bool:
     return speed > 8.0 and dwell < 0.5
 
 
-# ── HUD renderer ──────────────────────────────────────────────────────────────
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -116,7 +102,7 @@ def draw_hud(
     Render HUD onto *frame* in-place.
     Uses alpha_rect for the info panel (ROI copy only, not full frame).
     """
-    # ── Zone overlays ─────────────────────────────────────────────────────
+    
     for i, poly in enumerate(zone_polys):
         clr  = ZONE_PALETTE[i % len(ZONE_PALETTE)]
         over = frame.copy()
@@ -133,7 +119,6 @@ def draw_hud(
                               (cx + tw // 2 + 4, cy + 4), clr, 2)
         cv2.putText(frame, lbl, (cx - tw // 2, cy), _FONT, 0.65, clr, 2, cv2.LINE_AA)
 
-    # ── Vehicle boxes + dwell bars ────────────────────────────────────────
     for t in tracks:
         if t.missed > 5:
             continue
@@ -152,7 +137,6 @@ def draw_hud(
                         _FONT, 0.7, CLR_RED, 2, cv2.LINE_AA)
         cv2.putText(frame, lbl, (b.x1 + 2, b.y1 - 6), _FONT, 0.50, clr, 1, cv2.LINE_AA)
 
-    # ── Info panel (top-left via draw_panel — ROI alpha only) ─────────────
     active  = sum(1 for t in tracks if t.missed == 0)
     in_zone = sum(1 for t in tracks if t.first_seen_in_zone is not None and t.missed == 0)
     lines: List[Tuple[str, Tuple]] = [
@@ -172,8 +156,6 @@ def draw_hud(
                bg_color=(10, 10, 10), bg_alpha=0.75,
                border_color=(160, 160, 160))
 
-
-# ── Main pipeline ─────────────────────────────────────────────────────────────
 class IllegalParkingDetector:
     def __init__(
         self,
@@ -198,8 +180,6 @@ class IllegalParkingDetector:
         self.alert_mgr      = AlertManager(dwell_minutes)
         self.detector       = detector
 
-    # ── zone setup ────────────────────────────────────────────────────────
-
     def _get_zones(self, first_frame: np.ndarray) -> List[np.ndarray]:
         if self.preset_zones:
             return self.preset_zones
@@ -215,7 +195,6 @@ class IllegalParkingDetector:
             log.warning("No zones drawn — using default centre rectangle.")
         return zones
 
-    # ── main loop ─────────────────────────────────────────────────────────
 
     def run(self) -> dict:
         cap = open_video(self.video_path)
@@ -256,7 +235,6 @@ class IllegalParkingDetector:
                 break
             frame_no += 1
 
-            # ── Single conversion reused by detection + slot occupancy ──
             gray, processed = preprocess_frame(frame)
             detections      = self.detector.detect(frame, gray)
             tracks          = self.tracker.update(detections)
@@ -271,13 +249,11 @@ class IllegalParkingDetector:
                     else:
                         t.leave_zone()
 
-            # ── Slot occupancy (optional) ──────────────────────────────
             free_slots = None
             if self.slot_positions:
                 from core.slot_occupancy import draw_slots
                 free_slots = draw_slots(frame, processed, self.slot_positions, sx, sy)
 
-            # ── Rolling FPS ────────────────────────────────────────────
             now = time.perf_counter()
             _fps_times.append(now)
             if len(_fps_times) > _fps_window:

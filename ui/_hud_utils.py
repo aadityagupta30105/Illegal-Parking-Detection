@@ -1,9 +1,5 @@
 """
-ui/_hud_utils.py — Shared HUD visibility helpers.
-
-All drawing helpers guarantee legibility via semi-transparent background panels.
-Import:
-    from ui._hud_utils import alpha_rect, draw_text_box, draw_panel
+ui/_hud_utils.py
 """
 from __future__ import annotations
 
@@ -21,7 +17,6 @@ def alpha_rect(
     color: Tuple[int, int, int],
     alpha: float = 0.72,
 ) -> None:
-    """Blend a filled rectangle onto *img* in-place (no full-frame copy)."""
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
     if x2 <= x1 or y2 <= y1:
@@ -43,7 +38,6 @@ def draw_text_box(
     bg_alpha: float = 0.75,
     pad: int = 6,
 ) -> None:
-    """Single text string with a semi-transparent background box."""
     (tw, th), baseline = cv2.getTextSize(text, _FONT, font_scale, thickness)
     x, y = origin
     alpha_rect(img, x - pad, y - th - pad, x + tw + pad, y + baseline + pad,
@@ -63,10 +57,6 @@ def draw_panel(
     border_color: Tuple[int, int, int] = (180, 180, 180),
     pad: int = 8,
 ) -> None:
-    """
-    Draw a multi-line panel with a single semi-transparent background rectangle.
-    lines : list of (text, bgr_color) tuples.
-    """
     if not lines:
         return
 

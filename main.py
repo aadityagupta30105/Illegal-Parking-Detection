@@ -1,24 +1,6 @@
 #!/usr/bin/env python3
 """
-main.py — Unified Parking System CLI
-─────────────────────────────────────
-Modes
------
-  picker    Annotate rectangular parking slot positions on the first video frame.
-            The picker image is extracted automatically if it doesn't exist.
-
-  occupancy Run slot-occupancy detection only (classical preprocessing).
-
-  detect    Full pipeline: vehicle detection + tracking + zone-based illegal
-            parking + optional slot-occupancy overlay.
-
-Usage examples
---------------
-  python main.py picker    clip.mp4
-  python main.py occupancy clip.mp4
-  python main.py detect    clip.mp4 --yolo --dwell 2.0 --output out.mp4
-  python main.py detect    clip.mp4 --zone '[[x,y],[x,y],[x,y]]'
-  python main.py detect    clip.mp4 --no-display
+main.py
 """
 from __future__ import annotations
 
@@ -30,7 +12,6 @@ from typing import List, Optional
 
 import numpy as np
 
-# ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  [%(levelname)s]  %(message)s",
@@ -41,8 +22,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("ParkingSystem")
 
-
-# ── Mode handlers ─────────────────────────────────────────────────────────────
 def mode_picker(args: argparse.Namespace) -> None:
     from ui.slot_picker import run_picker
     run_picker(
@@ -60,8 +39,6 @@ def mode_occupancy(args: argparse.Namespace) -> None:
 def mode_detect(args: argparse.Namespace) -> None:
     from detectors.yolo import build_detector
     detector = build_detector(args.yolo, args.yolo_model, args.yolo_conf)
-
-    # ── Zone polygons (optional) ───────────────────────────────────────────
     zone_polys: Optional[List[np.ndarray]] = None
     if args.zone:
         try:
@@ -72,7 +49,7 @@ def mode_detect(args: argparse.Namespace) -> None:
         except (json.JSONDecodeError, TypeError, IndexError, ValueError) as e:
             log.warning("Could not parse --zone JSON (%s); opening annotation window.", e)
 
-    # ── Slot positions (optional) ──────────────────────────────────────────
+
     slot_positions: list = []
     if not args.no_slots:
         try:
@@ -97,7 +74,6 @@ def mode_detect(args: argparse.Namespace) -> None:
     ).run()
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Unified Parking System",

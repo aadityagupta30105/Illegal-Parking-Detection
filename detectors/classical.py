@@ -1,11 +1,5 @@
 """
-detectors/classical.py — MOG2 background-subtraction vehicle detector.
-
-Optimizations:
-- Single grayscale conversion shared across slot-occupancy and detection.
-- Pre-allocated morph kernels (class-level, not per-call).
-- Contour area pre-filter before boundingRect (avoids Python overhead).
-- Aspect-ratio filter uses integer math.
+detectors/classical.py 
 """
 from __future__ import annotations
 
@@ -20,12 +14,9 @@ from core.config import (
     THRESH_BLOCK, THRESH_C, BBox,
 )
 
-# ── Pre-allocated kernels (module-level, never reallocated) ──────────────────
 _DILATE_KERNEL  = np.ones((3, 3), np.uint8)
 _MORPH_KERNEL   = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
-
-# ── Shared preprocessing ─────────────────────────────────────────────────────
 def preprocess_frame(frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
     Convert *frame* to grayscale and produce the slot-occupancy mask.
@@ -46,17 +37,9 @@ def preprocess_frame(frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     processed = cv2.dilate(median, _DILATE_KERNEL, iterations=DILATE_ITER)
     return gray, processed
 
-
-# ── Classical MOG2 detector ──────────────────────────────────────────────────
 class ClassicalDetector:
     """
-    MOG2 → morphological cleanup → contour filtering.
-
-    Improvements over original:
-    - Accepts pre-computed gray (no redundant conversion when called from pipeline).
-    - Uses class-level kernels (no per-call allocation).
-    - Early-exits contour loop with area pre-check before boundingRect.
-    - Aspect ratio computed on integer w/h (avoids float division on every contour).
+    MOG2 
     """
 
     def __init__(self) -> None:
